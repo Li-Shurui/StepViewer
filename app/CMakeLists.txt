@@ -83,6 +83,10 @@ if(TARGET Q3Dviewer)
     list(APPEND plugin_targets Q3Dviewer)
 endif()
 
+if(TARGET yuvviewer)
+    list(APPEND plugin_targets yuvviewer)
+endif()
+
 if(QT6_IS_SHARED_LIBS_BUILD)
     add_dependencies(documentviewer ${plugin_targets})
 else()
