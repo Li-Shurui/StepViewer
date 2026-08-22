@@ -35,7 +35,7 @@
            <enum>QTabWidget::TabPosition::West</enum>
           </property>
           <property name="currentIndex">
-           <number>0</number>
+           <number>1</number>
           </property>
           <widget class="QWidget" name="bookmarkTab">
            <attribute name="title">
@@ -70,7 +70,7 @@
              <x>0</x>
              <y>0</y>
              <width>798</width>
-             <height>457</height>
+             <height>488</height>
             </rect>
            </property>
           </widget>
@@ -88,7 +88,7 @@
      <x>0</x>
      <y>0</y>
      <width>983</width>
-     <height>24</height>
+     <height>22</height>
     </rect>
    </property>
    <widget class="QMenu" name="qtFileMenu">

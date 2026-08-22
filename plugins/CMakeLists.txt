@@ -4,6 +4,7 @@
 add_subdirectory(imageviewer)
 add_subdirectory(jsonviewer)
 add_subdirectory(txtviewer)
+add_subdirectory(yuvviewer)
 
 if(TARGET Qt6::Quick3D)
     add_subdirectory(Q3DViewer)
