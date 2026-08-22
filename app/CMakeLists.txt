@@ -78,9 +78,6 @@ set(plugin_targets
     txtviewer
 )
 
-if(TARGET pdfviewer)
-    list(APPEND plugin_targets pdfviewer)
-endif()
 
 if(TARGET Q3Dviewer)
     list(APPEND plugin_targets Q3Dviewer)
