@@ -685,6 +685,18 @@ protected:
     bool chromaOrderIsUV() const override { return true; }
 };
 
+class Yv24Decoder final : public PlanarYuv444Decoder
+{
+public:
+    QLatin1StringView id() const override { return "yv24"_L1; }
+    QString displayName() const override { return QStringLiteral("YV24"); }
+    QString mimeType() const override { return "video/x-raw-yv24"_L1; }
+    QStringList fileExtensions() const override { return {"yv24"_L1, "YV24"_L1}; }
+
+protected:
+    bool chromaOrderIsUV() const override { return false; }
+};
+
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
@@ -758,6 +770,7 @@ const QList<const RawImageDecoder *> &all()
         new Nv16Decoder,
         new Nv61Decoder,
         new I444Decoder,
+        new Yv24Decoder,
         new Y8Decoder,
     };
     return decoders;
