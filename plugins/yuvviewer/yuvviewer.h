@@ -14,7 +14,9 @@ class QComboBox;
 class QImage;
 class QLabel;
 class QSpinBox;
+class QTableWidget;
 class RawImageDecoder;
+struct RawImageLayout;
 
 class YuvViewer : public ViewerInterface
 {
@@ -36,7 +38,8 @@ public:
     bool hasContent() const override;
     QByteArray saveState() const override;
     bool restoreState(QByteArray &state) override;
-    bool supportsOverview() const override { return false; }
+    bool supportsOverview() const override { return true; }
+    void cleanup() override;
 
 private slots:
     void setupYuvUi();
@@ -51,6 +54,8 @@ private:
     void busyChanged(bool busy) override;
     void clear();
     void displayImage(const QImage &image);
+    void updateInfoTab(const QString &fileName, const RawImageLayout &layout,
+                       const RawImageDecoder *decoder);
     void reportError(const QString &message);
     void setScaleFactor(qreal scaleFactor);
     void doSetScaleFactor(qreal scaleFactor);
@@ -63,6 +68,7 @@ private:
     QComboBox *m_formatComboBox = nullptr;
     QSpinBox *m_widthSpinBox = nullptr;
     QSpinBox *m_heightSpinBox = nullptr;
+    QTableWidget *m_infoTable = nullptr;
     QAction *m_reloadAction = nullptr;
     QAction *m_zoomInAction = nullptr;
     QAction *m_zoomOutAction = nullptr;

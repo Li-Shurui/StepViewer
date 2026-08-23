@@ -19,9 +19,12 @@
 #include <QImage>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLocale>
 #include <QPixmap>
 #include <QRegularExpression>
 #include <QSpinBox>
+#include <QTableWidget>
+#include <QTabWidget>
 #include <QToolBar>
 
 #include <expected>
@@ -291,6 +294,8 @@ bool YuvViewer::restoreState(QByteArray &state)
 
 void YuvViewer::setupYuvUi()
 {
+    m_infoTable = addInfoTab(tr("Info"));
+
     if (m_hasFileLayout) {
         reload();
         return;
@@ -361,12 +366,13 @@ void YuvViewer::reload()
         [this](int value) {
             statusMessage(tr("Loading... %1%").arg(value), tr("open"), 0);
         },
-        [this, fileName, loadLayout, formatName](RawImageDecoder::ImageResult result) {
+        [this, fileName, loadLayout, formatName, decoder](RawImageDecoder::ImageResult result) {
             if (!result) {
                 reportError(result.error());
                 return;
             }
             displayImage(*result);
+            updateInfoTab(fileName, loadLayout, decoder);
             statusMessage(tr("Opened \"%1\", %2x%3, %4 (stride=%5, scanline=%6).")
                               .arg(QDir::toNativeSeparators(fileName))
                               .arg(loadLayout.width)
@@ -375,6 +381,13 @@ void YuvViewer::reload()
                               .arg(loadLayout.stride)
                               .arg(loadLayout.scanline));
         });
+}
+
+void YuvViewer::cleanup()
+{
+    // The base class deletes the page widget; drop the dangling pointer.
+    m_infoTable = nullptr;
+    AbstractViewer::cleanup();
 }
 
 void YuvViewer::busyChanged(bool busy)
@@ -404,6 +417,9 @@ void YuvViewer::clear()
         m_imageLabel->setMinimumSize(0, 0);
         m_imageLabel->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
     }
+
+    if (m_infoTable)
+        m_infoTable->setRowCount(0);
 
     m_imageSize = {};
     m_maxScaleFactor = m_minScaleFactor = m_initialScaleFactor = m_scaleFactor = 1;
@@ -437,6 +453,33 @@ void YuvViewer::displayImage(const QImage &image)
     m_maxScaleFactor = 3 * m_initialScaleFactor;
     m_minScaleFactor = m_initialScaleFactor / 3;
     doSetScaleFactor(m_initialScaleFactor);
+}
+
+void YuvViewer::updateInfoTab(const QString &fileName, const RawImageLayout &layout,
+                              const RawImageDecoder *decoder)
+{
+    if (!m_infoTable || !decoder)
+        return;
+
+    const QLocale locale;
+    int row = 0;
+    const auto addRow = [this, &row](const QString &name, const QString &value) {
+        m_infoTable->insertRow(row);
+        m_infoTable->setItem(row, 0, new QTableWidgetItem(name));
+        m_infoTable->setItem(row, 1, new QTableWidgetItem(value));
+        ++row;
+    };
+
+    m_infoTable->setRowCount(0);
+    addRow(tr("File"), QDir::toNativeSeparators(fileName));
+    addRow(tr("Format"), decoder->displayName());
+    addRow(tr("Width"), tr("%1 px").arg(layout.width));
+    addRow(tr("Height"), tr("%1 px").arg(layout.height));
+    addRow(tr("Stride"), tr("%1 bytes").arg(layout.stride));
+    addRow(tr("Scanline"), tr("%1 lines").arg(layout.scanline));
+    addRow(tr("Y plane size"),
+           locale.formattedDataSize(qint64(layout.stride) * layout.scanline));
+    addRow(tr("File size"), locale.formattedDataSize(decoder->expectedByteSize(layout)));
 }
 
 void YuvViewer::reportError(const QString &message)
@@ -506,4 +549,10 @@ void YuvViewer::retranslate()
     m_zoomInAction->setText(tr("Zoom &In"));
     m_zoomOutAction->setText(tr("Zoom &Out"));
     m_resetZoomAction->setText(tr("Reset Zoom"));
+
+    if (m_infoTable && m_uiAssets.tabs) {
+        const int index = m_uiAssets.tabs->indexOf(m_infoTable);
+        if (index >= 0)
+            m_uiAssets.tabs->setTabText(index, tr("Info"));
+    }
 }
