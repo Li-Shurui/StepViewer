@@ -354,6 +354,8 @@ protected:
 // component order inside the macropixel (YUYV, UYVY, YVYU) differs.
 class PackedYuv422Decoder : public RawImageDecoder
 {
+    Q_DECLARE_TR_FUNCTIONS(PackedYuv422Decoder)
+
 public:
     LayoutResult validateLayout(const RawImageLayout &layout) const override
     {
@@ -614,6 +616,8 @@ protected:
 // chroma plane order (U,V vs V,U) differs between them.
 class PlanarYuv444Decoder : public RawImageDecoder
 {
+    Q_DECLARE_TR_FUNCTIONS(PlanarYuv444Decoder)
+
 public:
     LayoutResult validateLayout(const RawImageLayout &layout) const override
     {
@@ -704,6 +708,8 @@ protected:
 // the CV_8UC(n) view (e.g. BGRA, which QImage cannot wrap directly).
 class PackedRgbDecoder : public RawImageDecoder
 {
+    Q_DECLARE_TR_FUNCTIONS(PackedRgbDecoder)
+
 public:
     LayoutResult validateLayout(const RawImageLayout &layout) const override
     {
@@ -937,6 +943,8 @@ protected:
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
 {
+    Q_DECLARE_TR_FUNCTIONS(Y8Decoder)
+
 public:
     QLatin1StringView id() const override { return "y8"_L1; }
     QString displayName() const override { return QStringLiteral("Y8"); }

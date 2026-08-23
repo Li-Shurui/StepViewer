@@ -127,6 +127,8 @@ YuvViewer::YuvViewer()
     // path before this plugin performs any OpenCV work.
     cv::setUseOptimized(false);
 
+    setTranslationBaseName("yuvviewer"_L1);
+
     connect(this, &AbstractViewer::uiInitialized, this, &YuvViewer::setupYuvUi);
 
     m_reloadAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_R));
