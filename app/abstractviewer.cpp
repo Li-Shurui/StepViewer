@@ -5,12 +5,14 @@
 #include "translator.h"
 
 #include <QApplication>
+#include <QHeaderView>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QScrollArea>
 #include <QStatusBar>
+#include <QTableWidget>
 #include <QTabWidget>
 #include <QToolBar>
 
@@ -25,6 +27,15 @@
 #endif // DOCUMENTVIEWER_PRINTSUPPORT
 
 using namespace Qt::StringLiterals;
+
+namespace {
+
+QStringList infoTabHeaders()
+{
+    return { AbstractViewer::tr("Property"), AbstractViewer::tr("Value") };
+}
+
+} // namespace
 
 AbstractViewer::AbstractViewer() : m_file(nullptr), m_widget(nullptr)
 {
@@ -94,6 +105,23 @@ void AbstractViewer::busyChanged(bool busy)
 #endif
 }
 
+QTableWidget *AbstractViewer::addInfoTab(const QString &title)
+{
+    QTabWidget *tabs = m_uiAssets.tabs;
+    if (!tabs)
+        return nullptr;
+
+    auto *table = new QTableWidget(tabs);
+    table->setColumnCount(2);
+    table->setHorizontalHeaderLabels(infoTabHeaders());
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->verticalHeader()->hide();
+    table->horizontalHeader()->setStretchLastSection(true);
+    tabs->addTab(table, title);
+    m_infoTabs.append(table);
+    return table;
+}
+
 std::expected<QByteArray, QString> AbstractViewer::readFileChunked(
         const QString &fileName, const ReadProgressCallback &progress)
 {
@@ -150,6 +178,8 @@ bool AbstractViewer::eventFilter(QObject *, QEvent *event)
             m_translator->install();
         }
         retranslate();
+        for (QTableWidget *table : std::as_const(m_infoTabs))
+            table->setHorizontalHeaderLabels(infoTabHeaders());
     }
     return false;
 }
@@ -288,6 +318,10 @@ void AbstractViewer::cleanup()
     m_menus.clear();
     qDeleteAll(m_toolBars);
     m_toolBars.clear();
+
+    // Deleting a page widget also removes its tab from the tab widget.
+    qDeleteAll(m_infoTabs);
+    m_infoTabs.clear();
 
     for (const auto &connection : m_connections)
         QObject::disconnect(connection);

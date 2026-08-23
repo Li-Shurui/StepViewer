@@ -29,6 +29,7 @@
 #include <utility>
 
 class Translator;
+class QTableWidget;
 
 class ABSTRACTVIEWER_EXPORT AbstractViewer : public QObject
 {
@@ -125,6 +126,14 @@ protected:
     static std::expected<QByteArray, QString> readFileChunked(const QString &fileName,
                                                               const ReadProgressCallback &progress);
 
+    // Creates a two-column read-only property table as a new page in the
+    // overview tab widget and returns it. Call only after uiInitialized()
+    // (the tab widget is not available during init()). Pages are owned by
+    // the viewer and deleted automatically in cleanup(); do not delete them
+    // manually, and reset any stored pointer when overriding cleanup().
+    // Only visible if supportsOverview() returns true.
+    QTableWidget *addInfoTab(const QString &title);
+
     // Called on the UI thread when the number of running async tasks changes
     // between zero and non-zero. The base implementation toggles a busy
     // cursor; reimplementations that toggle viewer UI must call it.
@@ -149,6 +158,7 @@ private:
     QList<QMenu *> m_menus;
     QList<QToolBar *> m_toolBars;
     QList<QFutureWatcherBase *> m_asyncWatchers;
+    QList<QTableWidget *> m_infoTabs;
     quint64 m_taskGeneration = 0;
     int m_busyTasks = 0;
     bool m_printingEnabled = false;
