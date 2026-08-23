@@ -48,6 +48,18 @@ AbstractViewer *ViewerFactory::viewer(QFile *file) const
     // Find via extension
     AbstractViewer *viewer = ViewerFactory::viewer(info.suffix());
 
+    // Files without an extension are offered to viewers accepting raw
+    // files (e.g. the YUV viewer), where the user picks the format.
+    if (!viewer && info.suffix().isEmpty()) {
+        const ViewerList &viewerList = viewers();
+        for (AbstractViewer *candidate : viewerList) {
+            if (candidate->supportsExtensionlessFiles()) {
+                viewer = candidate;
+                break;
+            }
+        }
+    }
+
     // Find via mime type
     if (!viewer) {
         QMimeDatabase db;

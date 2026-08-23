@@ -53,6 +53,12 @@ public:
     virtual bool hasContent() const;
     virtual QStringList supportedMimeTypes() const = 0;
     virtual QStringList supportedExtensions() const { return {}; }
+
+    // Viewers returning true are offered files that have no file name
+    // extension (e.g. raw data), before the factory falls back to mime
+    // type sniffing and the default viewer.
+    virtual bool supportsExtensionlessFiles() const;
+
     virtual bool isDefaultViewer() const;
     virtual void cleanup();
     void setTranslationBaseName(const QString &baseName);
