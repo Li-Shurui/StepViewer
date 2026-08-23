@@ -855,6 +855,26 @@ protected:
     int conversionCode() const override { return cv::COLOR_BGRA2RGBA; }
 };
 
+class Bgrx8888Decoder final : public PackedRgbDecoder
+{
+public:
+    QLatin1StringView id() const override { return "bgrx8888"_L1; }
+    QString displayName() const override { return QStringLiteral("BGRX8888"); }
+    QString mimeType() const override { return "video/x-raw-bgrx8888"_L1; }
+    QStringList fileExtensions() const override
+    {
+        return {"bgrx8888"_L1, "BGRX8888"_L1, "bgrx"_L1, "BGRX"_L1};
+    }
+
+protected:
+    int bytesPerPixel() const override { return 4; }
+    // QImage has no byte-ordered BGRX format; convert via OpenCV,
+    // dropping the padding byte instead of leaking it into the alpha.
+    QImage::Format imageFormat() const override { return QImage::Format_Invalid; }
+    int conversionCode() const override { return cv::COLOR_BGRA2RGB; }
+    QImage::Format convertedFormat() const override { return QImage::Format_RGB888; }
+};
+
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
@@ -934,6 +954,7 @@ const QList<const RawImageDecoder *> &all()
         new Rgba8888Decoder,
         new Rgbx8888Decoder,
         new Bgra8888Decoder,
+        new Bgrx8888Decoder,
         new Y8Decoder,
     };
     return decoders;
