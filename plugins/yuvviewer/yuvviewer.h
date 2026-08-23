@@ -33,6 +33,7 @@ public:
     ~YuvViewer() override;
 
     void init(QFile *file, QWidget *parent, QMainWindow *mainWindow) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
     QString viewerName() const override { return QLatin1StringView(staticMetaObject.className()); }
     QStringList supportedMimeTypes() const override;
     QStringList supportedExtensions() const override;
@@ -66,6 +67,7 @@ private:
     void updateFrameUi(qint64 frameCount);
     void updatePlaneCombo();
     int currentPlane() const;
+    QPoint compositePosition(QPoint widgetPos) const;
 
     QLabel *m_imageLabel = nullptr;
     QLabel *m_widthLabel = nullptr;
@@ -96,6 +98,7 @@ private:
     qint64 m_frameCount = 1;
     QByteArray m_rawData;
     RawImageLayout m_layout;
+    QImage m_image;
     qreal m_scaleFactor = 1;
     qreal m_initialScaleFactor = 1;
     qreal m_minScaleFactor = 1;

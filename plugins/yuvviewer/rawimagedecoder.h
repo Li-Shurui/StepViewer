@@ -73,6 +73,12 @@ public:
     virtual ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
                                      int plane) const;
 
+    // Pixel probe: describes the raw sample values of the pixel at (x,y)
+    // in composite coordinates, e.g. "Y=128 U=90 V=200". The base
+    // implementation returns an empty string (probe unavailable).
+    virtual QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                                  int x, int y) const;
+
     // Shared file loading, size-checked against expectedByteSize().
     // A file whose size is a multiple of the frame size is treated as a
     // multi-frame sequence; frameIndex selects which frame to read.
