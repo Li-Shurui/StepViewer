@@ -178,6 +178,59 @@ protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_NV21; }
 };
 
+// Single-plane 8-bit grayscale: Y samples only, no chroma, so no
+// subsampling alignment constraints apply.
+class Y8Decoder final : public RawImageDecoder
+{
+public:
+    QLatin1StringView id() const override { return "y8"_L1; }
+    QString displayName() const override { return QStringLiteral("Y8"); }
+    QString mimeType() const override { return "video/x-raw-y8"_L1; }
+    QStringList fileExtensions() const override { return {"y8"_L1, "Y8"_L1}; }
+
+    LayoutResult validateLayout(const RawImageLayout &layout) const override
+    {
+        const LayoutResult baseResult = RawImageDecoder::validateLayout(layout);
+        if (!baseResult)
+            return baseResult;
+
+        if (layout.stride < layout.width) {
+            return std::unexpected(tr("%1 stride must be at least the width. "
+                                      "Received width %2, stride %3.")
+                                       .arg(displayName())
+                                       .arg(layout.width)
+                                       .arg(layout.stride));
+        }
+        if (layout.scanline < layout.height) {
+            return std::unexpected(tr("%1 scanline must be at least the height. "
+                                      "Received height %2, scanline %3.")
+                                       .arg(displayName())
+                                       .arg(layout.height)
+                                       .arg(layout.scanline));
+        }
+
+        return layout;
+    }
+
+    qint64 expectedByteSize(const RawImageLayout &layout) const override
+    {
+        return qint64(layout.stride) * qint64(layout.scanline);
+    }
+
+    ImageResult convertToImage(const QByteArray &data,
+                               const RawImageLayout &layout) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const QImage wrappedImage(pixels, layout.width, layout.height,
+                                  static_cast<qsizetype>(layout.stride),
+                                  QImage::Format_Grayscale8);
+        QImage image = wrappedImage.copy();
+        if (image.isNull())
+            return std::unexpected(tr("Could not allocate the converted QImage."));
+        return image;
+    }
+};
+
 } // namespace
 
 namespace RawImageDecoders {
@@ -188,6 +241,7 @@ const QList<const RawImageDecoder *> &all()
     static const QList<const RawImageDecoder *> decoders = {
         new Nv12Decoder,
         new Nv21Decoder,
+        new Y8Decoder,
     };
     return decoders;
 }
