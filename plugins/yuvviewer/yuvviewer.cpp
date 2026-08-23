@@ -14,6 +14,7 @@
 #include <QDir>
 #include <QEvent>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
 #include <QIcon>
@@ -273,7 +274,8 @@ YuvViewer::YuvViewer()
       m_resetZoomAction(new QAction(this)),
       m_fitToWindowAction(new QAction(this)),
       m_smoothScalingAction(new QAction(this)),
-      m_pixelGridAction(new QAction(this))
+      m_pixelGridAction(new QAction(this)),
+      m_exportAction(new QAction(this))
 {
     // OpenCV 4.12's MinGW AVX2 semi-planar YUV converters can fault on some
     // Windows systems instead of reporting an exception. Select the portable
@@ -331,12 +333,17 @@ YuvViewer::YuvViewer()
             m_imageWidget->setPixelGrid(checked);
     });
 
+    m_exportAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::DocumentSaveAs));
+    m_exportAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_E));
+    connect(m_exportAction, &QAction::triggered, this, &YuvViewer::exportImage);
+
     m_prevFrameAction->setEnabled(false);
     m_nextFrameAction->setEnabled(false);
     m_zoomInAction->setEnabled(false);
     m_zoomOutAction->setEnabled(false);
     m_resetZoomAction->setEnabled(false);
     m_fitToWindowAction->setEnabled(false);
+    m_exportAction->setEnabled(false);
 }
 
 YuvViewer::~YuvViewer() = default;
@@ -414,6 +421,8 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
     toolBar->addSeparator();
     toolBar->addAction(m_smoothScalingAction);
     toolBar->addAction(m_pixelGridAction);
+    toolBar->addSeparator();
+    toolBar->addAction(m_exportAction);
 
     m_hasFileLayout = false;
     m_fileWidth = m_fileHeight = m_fileStride = m_fileScanline = 0;
@@ -797,6 +806,7 @@ void YuvViewer::clear()
     m_zoomOutAction->setEnabled(false);
     m_resetZoomAction->setEnabled(false);
     m_fitToWindowAction->setEnabled(false);
+    m_exportAction->setEnabled(false);
     disablePrinting();
 }
 
@@ -933,6 +943,7 @@ void YuvViewer::enableZoomActions()
     m_zoomInAction->setEnabled(m_scaleFactor < m_maxScaleFactor);
     m_zoomOutAction->setEnabled(m_scaleFactor > m_minScaleFactor);
     m_fitToWindowAction->setEnabled(!m_image.isNull());
+    m_exportAction->setEnabled(!m_image.isNull());
 }
 
 void YuvViewer::zoomIn()
@@ -964,6 +975,43 @@ void YuvViewer::fitToWindow()
                         available.height() / m_imageSize.height()));
 }
 
+void YuvViewer::exportImage()
+{
+    if (m_image.isNull() || !m_file)
+        return;
+
+    // Export exactly what is on screen: the composite rendering or the
+    // selected component plane.
+    QString suggestion = QFileInfo(m_file->fileName()).completeBaseName();
+    if (m_frameSpinBox && m_frameCount > 1)
+        suggestion += QStringLiteral("_frame%1").arg(m_frameSpinBox->value());
+    if (m_planeComboBox && m_planeComboBox->currentIndex() > 0)
+        suggestion += QStringLiteral("_") + m_planeComboBox->currentText().toLower();
+    suggestion += QStringLiteral(".png");
+
+    const QString filter = tr("PNG image (*.png);;BMP image (*.bmp)");
+    QString selectedFilter;
+    const QString fileName = QFileDialog::getSaveFileName(m_imageWidget,
+                                                          tr("Export Image"), suggestion,
+                                                          filter, &selectedFilter);
+    if (fileName.isEmpty())
+        return;
+
+    QString finalName = fileName;
+    if (QFileInfo(finalName).suffix().isEmpty()) {
+        finalName += selectedFilter.contains(QStringLiteral("bmp"), Qt::CaseInsensitive)
+            ? QStringLiteral(".bmp") : QStringLiteral(".png");
+    }
+
+    if (!m_image.save(finalName)) {
+        reportError(tr("Failed to save the image to \"%1\".")
+                        .arg(QDir::toNativeSeparators(finalName)));
+        return;
+    }
+    statusMessage(tr("Exported \"%1\".").arg(QDir::toNativeSeparators(finalName)),
+                  tr("export"));
+}
+
 void YuvViewer::retranslate()
 {
     if (toolBars().isEmpty())
@@ -988,6 +1036,7 @@ void YuvViewer::retranslate()
     m_fitToWindowAction->setText(tr("&Fit to Window"));
     m_smoothScalingAction->setText(tr("&Smooth Scaling"));
     m_pixelGridAction->setText(tr("Pixel &Grid"));
+    m_exportAction->setText(tr("&Export..."));
 
     if (m_infoTable && m_uiAssets.tabs) {
         const int index = m_uiAssets.tabs->indexOf(m_infoTable);

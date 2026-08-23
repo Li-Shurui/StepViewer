@@ -54,6 +54,7 @@ private slots:
     void zoomOut();
     void resetZoom();
     void fitToWindow();
+    void exportImage();
 
 private:
     void retranslate() override;
@@ -94,6 +95,7 @@ private:
     QAction *m_fitToWindowAction = nullptr;
     QAction *m_smoothScalingAction = nullptr;
     QAction *m_pixelGridAction = nullptr;
+    QAction *m_exportAction = nullptr;
     const RawImageDecoder *m_decoder = nullptr;
     bool m_hasFileLayout = false;
     int m_fileWidth = 0;
