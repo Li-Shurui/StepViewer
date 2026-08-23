@@ -324,32 +324,50 @@ void YuvViewer::reload()
         requestedLayout.scanline = m_fileScanline;
     }
 
+    // Layout validation is cheap and stays synchronous; only file reading
+    // and pixel conversion move to a worker thread.
     const auto layout = m_decoder->validateLayout(requestedLayout);
     if (!layout) {
         reportError(layout.error());
         return;
     }
 
-    const auto data = m_decoder->readData(m_file->fileName(), *layout);
-    if (!data) {
-        reportError(data.error());
-        return;
-    }
+    const QString fileName = m_file->fileName();
+    const RawImageLayout loadLayout = *layout;
+    const RawImageDecoder *decoder = m_decoder;
+    const QString formatName = decoder->displayName();
 
-    const auto image = m_decoder->convertToImage(*data, *layout);
-    if (!image) {
-        reportError(image.error());
-        return;
-    }
+    m_imageLabel->setText(tr("Loading..."));
+    m_imageLabel->setWordWrap(true);
 
-    displayImage(*image);
-    statusMessage(tr("Opened \"%1\", %2x%3, %4 (stride=%5, scanline=%6).")
-                      .arg(QDir::toNativeSeparators(m_file->fileName()))
-                      .arg(layout->width)
-                      .arg(layout->height)
-                      .arg(m_decoder->displayName())
-                      .arg(layout->stride)
-                      .arg(layout->scanline));
+    startAsyncTask(
+        [fileName, loadLayout, decoder]() -> RawImageDecoder::ImageResult {
+            auto data = decoder->readData(fileName, loadLayout);
+            if (!data)
+                return std::unexpected(data.error());
+            return decoder->convertToImage(*data, loadLayout);
+        },
+        [this, fileName, loadLayout, formatName](RawImageDecoder::ImageResult result) {
+            if (!result) {
+                reportError(result.error());
+                return;
+            }
+            displayImage(*result);
+            statusMessage(tr("Opened \"%1\", %2x%3, %4 (stride=%5, scanline=%6).")
+                              .arg(QDir::toNativeSeparators(fileName))
+                              .arg(loadLayout.width)
+                              .arg(loadLayout.height)
+                              .arg(formatName)
+                              .arg(loadLayout.stride)
+                              .arg(loadLayout.scanline));
+        });
+}
+
+void YuvViewer::busyChanged(bool busy)
+{
+    AbstractViewer::busyChanged(busy);
+    if (m_reloadAction)
+        m_reloadAction->setEnabled(!busy);
 }
 
 void YuvViewer::onFormatChanged()

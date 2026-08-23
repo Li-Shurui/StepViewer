@@ -48,6 +48,7 @@ private slots:
 
 private:
     void retranslate() override;
+    void busyChanged(bool busy) override;
     void clear();
     void displayImage(const QImage &image);
     void reportError(const QString &message);
