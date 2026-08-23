@@ -8,6 +8,7 @@
 
 #include <QFile>
 
+#include <array>
 #include <cstring>
 
 using namespace Qt::StringLiterals;
@@ -32,6 +33,13 @@ RawImageDecoder::LayoutResult RawImageDecoder::validateLayout(const RawImageLayo
 int RawImageDecoder::defaultStride(int width) const
 {
     return width;
+}
+
+RawImageDecoder::ImageResult RawImageDecoder::extractPlane(const QByteArray &,
+                                                           const RawImageLayout &, int) const
+{
+    return std::unexpected(tr("%1 does not support separate plane viewing.")
+                               .arg(displayName()));
 }
 
 RawImageDecoder::DataResult RawImageDecoder::readData(const QString &fileName,
@@ -207,6 +215,61 @@ RawImageDecoder::ImageResult runConversion(const RawImageDecoder &decoder,
     }
 }
 
+// Wraps an 8-bit plane as a detached Format_Grayscale8 image.
+RawImageDecoder::ImageResult grayscalePlane(const uchar *base, int width, int height,
+                                            qsizetype stride)
+{
+    const QImage wrapped(base, width, height, stride, QImage::Format_Grayscale8);
+    QImage image = wrapped.copy();
+    if (image.isNull())
+        return std::unexpected(RawImageDecoder::tr("Could not allocate the plane image."));
+    return image;
+}
+
+// Copies every step-th byte starting at offset into a tight grayscale
+// image; used to deinterleave packed or semi-planar components.
+RawImageDecoder::ImageResult stridedPlane(const uchar *base, int width, int height,
+                                          qint64 rowStride, int step, int offset)
+{
+    QImage image(width, height, QImage::Format_Grayscale8);
+    if (image.isNull())
+        return std::unexpected(RawImageDecoder::tr("Could not allocate the plane image."));
+    for (int row = 0; row < height; ++row) {
+        const uchar *src = base + qint64(row) * rowStride + offset;
+        uchar *dst = image.scanLine(row);
+        for (int col = 0; col < width; ++col)
+            dst[col] = src[col * step];
+    }
+    return image;
+}
+
+// Extracts one channel of a bit-packed 16-bit RGB format (RGB565 and
+// friends) and scales it to 8 bits.
+RawImageDecoder::ImageResult rgb16Plane(const uchar *base, int width, int height,
+                                        qint64 rowStride, quint16 mask, int shift, int bits)
+{
+    QImage image(width, height, QImage::Format_Grayscale8);
+    if (image.isNull())
+        return std::unexpected(RawImageDecoder::tr("Could not allocate the plane image."));
+    const int maxValue = (1 << bits) - 1;
+    for (int row = 0; row < height; ++row) {
+        const uchar *src = base + qint64(row) * rowStride;
+        uchar *dst = image.scanLine(row);
+        for (int col = 0; col < width; ++col) {
+            quint16 pixel;
+            memcpy(&pixel, src + 2 * col, sizeof(pixel));
+            const int value = (pixel & mask) >> shift;
+            dst[col] = uchar((value * 255 + maxValue / 2) / maxValue);
+        }
+    }
+    return image;
+}
+
+RawImageDecoder::ImageResult invalidPlane(int plane)
+{
+    return std::unexpected(RawImageDecoder::tr("Invalid plane index %1.").arg(plane));
+}
+
 // Shared implementation for two-plane (semi-planar) YUV 4:2:0 formats:
 // a full-resolution Y plane followed by an interleaved 2x2-subsampled
 // chroma plane. Only the chroma order (UV vs VU) differs between them.
@@ -240,9 +303,35 @@ public:
         });
     }
 
+    QStringList planeNames() const override
+    {
+        return {QStringLiteral("Y"), QStringLiteral("U"), QStringLiteral("V")};
+    }
+
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        switch (plane) {
+        case 0:
+            return grayscalePlane(pixels, layout.width, layout.height, layout.stride);
+        case 1:
+        case 2: {
+            const int offset = ((plane == 1) == chromaOrderIsUV()) ? 0 : 1;
+            return stridedPlane(pixels + yPlaneBytes, layout.width / 2, layout.height / 2,
+                                layout.stride, 2, offset);
+        }
+        default:
+            return invalidPlane(plane);
+        }
+    }
+
 protected:
     // cv::COLOR_YUV2RGBA_NV12 / cv::COLOR_YUV2RGBA_NV21 / ...
     virtual int conversionCode() const = 0;
+    // NV12 interleaves U,V; NV21 interleaves V,U.
+    virtual bool chromaOrderIsUV() const = 0;
 };
 
 class Nv12Decoder final : public SemiPlanarYuv420Decoder
@@ -255,6 +344,7 @@ public:
 
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_NV12; }
+    bool chromaOrderIsUV() const override { return true; }
 };
 
 class Nv21Decoder final : public SemiPlanarYuv420Decoder
@@ -267,6 +357,7 @@ public:
 
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_NV21; }
+    bool chromaOrderIsUV() const override { return false; }
 };
 
 // Shared implementation for three-plane (planar) YUV 4:2:0 formats:
@@ -333,9 +424,38 @@ public:
         });
     }
 
+    QStringList planeNames() const override
+    {
+        return {QStringLiteral("Y"), QStringLiteral("U"), QStringLiteral("V")};
+    }
+
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        const qint64 chromaPlaneBytes = qint64(layout.stride / 2) * (layout.scanline / 2);
+        switch (plane) {
+        case 0:
+            return grayscalePlane(pixels, layout.width, layout.height, layout.stride);
+        case 1:
+            return grayscalePlane(pixels + yPlaneBytes
+                                      + (chromaOrderIsUV() ? 0 : chromaPlaneBytes),
+                                  layout.width / 2, layout.height / 2, layout.stride / 2);
+        case 2:
+            return grayscalePlane(pixels + yPlaneBytes
+                                      + (chromaOrderIsUV() ? chromaPlaneBytes : 0),
+                                  layout.width / 2, layout.height / 2, layout.stride / 2);
+        default:
+            return invalidPlane(plane);
+        }
+    }
+
 protected:
     // cv::COLOR_YUV2RGBA_I420 / cv::COLOR_YUV2RGBA_YV12 / ...
     virtual int conversionCode() const = 0;
+    // I420 stores Y,U,V planes; YV12 stores Y,V,U.
+    virtual bool chromaOrderIsUV() const = 0;
 };
 
 class I420Decoder final : public PlanarYuv420Decoder
@@ -348,6 +468,7 @@ public:
 
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_I420; }
+    bool chromaOrderIsUV() const override { return true; }
 };
 
 class Yv12Decoder final : public PlanarYuv420Decoder
@@ -360,6 +481,7 @@ public:
 
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_YV12; }
+    bool chromaOrderIsUV() const override { return false; }
 };
 
 // Shared implementation for packed (interleaved) YUV 4:2:2 formats:
@@ -419,9 +541,36 @@ public:
         });
     }
 
+    QStringList planeNames() const override
+    {
+        return {QStringLiteral("Y"), QStringLiteral("U"), QStringLiteral("V")};
+    }
+
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const auto offsets = componentOffsets();
+        switch (plane) {
+        case 0:
+            return stridedPlane(pixels, layout.width, layout.height, layout.stride,
+                                2, offsets[0]);
+        case 1:
+            return stridedPlane(pixels, layout.width / 2, layout.height, layout.stride,
+                                4, offsets[1]);
+        case 2:
+            return stridedPlane(pixels, layout.width / 2, layout.height, layout.stride,
+                                4, offsets[2]);
+        default:
+            return invalidPlane(plane);
+        }
+    }
+
 protected:
     // cv::COLOR_YUV2RGBA_YUY2 / cv::COLOR_YUV2RGBA_UYVY / ...
     virtual int conversionCode() const = 0;
+    // Byte offsets of Y, U and V inside the 4-byte macropixel.
+    virtual std::array<int, 3> componentOffsets() const = 0;
 };
 
 class Yuy2Decoder final : public PackedYuv422Decoder
@@ -437,6 +586,7 @@ public:
 
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_YUY2; }
+    std::array<int, 3> componentOffsets() const override { return {0, 1, 3}; }
 };
 
 class UyvyDecoder final : public PackedYuv422Decoder
@@ -449,6 +599,7 @@ public:
 
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_UYVY; }
+    std::array<int, 3> componentOffsets() const override { return {1, 0, 2}; }
 };
 
 class YvyuDecoder final : public PackedYuv422Decoder
@@ -461,6 +612,7 @@ public:
 
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_YVYU; }
+    std::array<int, 3> componentOffsets() const override { return {0, 3, 1}; }
 };
 
 // Shared implementation for three-plane (planar) YUV 4:2:2 formats:
@@ -515,6 +667,33 @@ public:
             cv::cvtColor(yuv, rgba, cv::COLOR_YUV2RGBA_YUY2);
             return rgbaMatToImage(rgba, layout);
         });
+    }
+
+    QStringList planeNames() const override
+    {
+        return {QStringLiteral("Y"), QStringLiteral("U"), QStringLiteral("V")};
+    }
+
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        const qint64 chromaPlaneBytes = qint64(layout.stride / 2) * layout.scanline;
+        switch (plane) {
+        case 0:
+            return grayscalePlane(pixels, layout.width, layout.height, layout.stride);
+        case 1:
+            return grayscalePlane(pixels + yPlaneBytes
+                                      + (chromaOrderIsUV() ? 0 : chromaPlaneBytes),
+                                  layout.width / 2, layout.height, layout.stride / 2);
+        case 2:
+            return grayscalePlane(pixels + yPlaneBytes
+                                      + (chromaOrderIsUV() ? chromaPlaneBytes : 0),
+                                  layout.width / 2, layout.height, layout.stride / 2);
+        default:
+            return invalidPlane(plane);
+        }
     }
 
 protected:
@@ -593,6 +772,30 @@ public:
             cv::cvtColor(yuv, rgba, cv::COLOR_YUV2RGBA_YUY2);
             return rgbaMatToImage(rgba, layout);
         });
+    }
+
+    QStringList planeNames() const override
+    {
+        return {QStringLiteral("Y"), QStringLiteral("U"), QStringLiteral("V")};
+    }
+
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        switch (plane) {
+        case 0:
+            return grayscalePlane(pixels, layout.width, layout.height, layout.stride);
+        case 1:
+        case 2: {
+            const int offset = ((plane == 1) == chromaOrderIsUV()) ? 0 : 1;
+            return stridedPlane(pixels + yPlaneBytes, layout.width / 2, layout.height,
+                                layout.stride, 2, offset);
+        }
+        default:
+            return invalidPlane(plane);
+        }
     }
 
 protected:
@@ -684,6 +887,30 @@ public:
             cv::cvtColor(yuv, rgb, cv::COLOR_YUV2RGB);
             return rgbaMatToImage(rgb, layout, QImage::Format_RGB888);
         });
+    }
+
+    QStringList planeNames() const override
+    {
+        return {QStringLiteral("Y"), QStringLiteral("U"), QStringLiteral("V")};
+    }
+
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 planeBytes = qint64(layout.stride) * layout.scanline;
+        switch (plane) {
+        case 0:
+            return grayscalePlane(pixels, layout.width, layout.height, layout.stride);
+        case 1:
+            return grayscalePlane(pixels + (chromaOrderIsUV() ? planeBytes : 2 * planeBytes),
+                                  layout.width, layout.height, layout.stride);
+        case 2:
+            return grayscalePlane(pixels + (chromaOrderIsUV() ? 2 * planeBytes : planeBytes),
+                                  layout.width, layout.height, layout.stride);
+        default:
+            return invalidPlane(plane);
+        }
     }
 
 protected:
@@ -779,6 +1006,37 @@ public:
         });
     }
 
+    QStringList planeNames() const override
+    {
+        QStringList names{QStringLiteral("R"), QStringLiteral("G"), QStringLiteral("B")};
+        if (bytesPerPixel() == 4)
+            names << QString(fourthChannelName());
+        return names;
+    }
+
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const override
+    {
+        if (plane < 0 || plane >= planeNames().size())
+            return invalidPlane(plane);
+
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const int byteOffset = channelByteOffset(plane);
+        if (byteOffset >= 0) {
+            return stridedPlane(pixels, layout.width, layout.height, layout.stride,
+                                bytesPerPixel(), byteOffset);
+        }
+
+        quint16 mask = 0;
+        int shift = 0;
+        int bits = 0;
+        if (channelBitLayout(plane, mask, shift, bits)) {
+            return rgb16Plane(pixels, layout.width, layout.height, layout.stride,
+                              mask, shift, bits);
+        }
+        return invalidPlane(plane);
+    }
+
 protected:
     virtual int bytesPerPixel() const = 0;
 
@@ -790,6 +1048,24 @@ protected:
     // the QImage format of the converted output.
     virtual int conversionCode() const { return -1; }
     virtual QImage::Format convertedFormat() const { return QImage::Format_RGBA8888; }
+
+    // Name of the fourth channel in 4-byte formats: alpha or padding.
+    virtual QLatin1StringView fourthChannelName() const { return "A"_L1; }
+
+    // 8-bit formats: byte offset of channel c (0=R, 1=G, 2=B, 3=A/X)
+    // within a pixel, or -1 if the channel is absent or bit-packed.
+    virtual int channelByteOffset(int channel) const = 0;
+
+    // 16-bit bit-packed formats (RGB565 and friends): mask, shift and
+    // bit count of channel c. Returns false for byte-ordered formats.
+    virtual bool channelBitLayout(int channel, quint16 &mask, int &shift, int &bits) const
+    {
+        Q_UNUSED(channel);
+        Q_UNUSED(mask);
+        Q_UNUSED(shift);
+        Q_UNUSED(bits);
+        return false;
+    }
 };
 
 class Rgb888Decoder final : public PackedRgbDecoder
@@ -806,6 +1082,11 @@ public:
 protected:
     int bytesPerPixel() const override { return 3; }
     QImage::Format imageFormat() const override { return QImage::Format_RGB888; }
+    int channelByteOffset(int channel) const override
+    {
+        constexpr int offsets[] = {0, 1, 2, -1};
+        return offsets[channel];
+    }
 };
 
 class Bgr888Decoder final : public PackedRgbDecoder
@@ -822,6 +1103,11 @@ public:
 protected:
     int bytesPerPixel() const override { return 3; }
     QImage::Format imageFormat() const override { return QImage::Format_BGR888; }
+    int channelByteOffset(int channel) const override
+    {
+        constexpr int offsets[] = {2, 1, 0, -1};
+        return offsets[channel];
+    }
 };
 
 class Rgba8888Decoder final : public PackedRgbDecoder
@@ -838,6 +1124,11 @@ public:
 protected:
     int bytesPerPixel() const override { return 4; }
     QImage::Format imageFormat() const override { return QImage::Format_RGBA8888; }
+    int channelByteOffset(int channel) const override
+    {
+        constexpr int offsets[] = {0, 1, 2, 3};
+        return offsets[channel];
+    }
 };
 
 class Rgbx8888Decoder final : public PackedRgbDecoder
@@ -854,6 +1145,12 @@ public:
 protected:
     int bytesPerPixel() const override { return 4; }
     QImage::Format imageFormat() const override { return QImage::Format_RGBX8888; }
+    QLatin1StringView fourthChannelName() const override { return "X"_L1; }
+    int channelByteOffset(int channel) const override
+    {
+        constexpr int offsets[] = {0, 1, 2, 3};
+        return offsets[channel];
+    }
 };
 
 class Bgra8888Decoder final : public PackedRgbDecoder
@@ -872,6 +1169,11 @@ protected:
     // QImage has no byte-ordered BGRA format; swap channels via OpenCV.
     QImage::Format imageFormat() const override { return QImage::Format_Invalid; }
     int conversionCode() const override { return cv::COLOR_BGRA2RGBA; }
+    int channelByteOffset(int channel) const override
+    {
+        constexpr int offsets[] = {2, 1, 0, 3};
+        return offsets[channel];
+    }
 };
 
 class Bgrx8888Decoder final : public PackedRgbDecoder
@@ -892,6 +1194,12 @@ protected:
     QImage::Format imageFormat() const override { return QImage::Format_Invalid; }
     int conversionCode() const override { return cv::COLOR_BGRA2RGB; }
     QImage::Format convertedFormat() const override { return QImage::Format_RGB888; }
+    QLatin1StringView fourthChannelName() const override { return "X"_L1; }
+    int channelByteOffset(int channel) const override
+    {
+        constexpr int offsets[] = {2, 1, 0, 3};
+        return offsets[channel];
+    }
 };
 
 class Rgb565Decoder final : public PackedRgbDecoder
@@ -906,6 +1214,18 @@ protected:
     // Little-endian 16-bit R:G:B 5:6:5 samples match QImage::Format_RGB16.
     int bytesPerPixel() const override { return 2; }
     QImage::Format imageFormat() const override { return QImage::Format_RGB16; }
+    int channelByteOffset(int) const override { return -1; }
+    bool channelBitLayout(int channel, quint16 &mask, int &shift, int &bits) const override
+    {
+        struct ChannelBits { quint16 mask; int shift; int bits; };
+        constexpr ChannelBits channels[] = {{0xF800, 11, 5}, {0x07E0, 5, 6}, {0x001F, 0, 5}};
+        if (channel < 0 || channel > 2)
+            return false;
+        mask = channels[channel].mask;
+        shift = channels[channel].shift;
+        bits = channels[channel].bits;
+        return true;
+    }
 };
 
 class Bgr565Decoder final : public PackedRgbDecoder
@@ -921,6 +1241,18 @@ protected:
     // QImage has no BGR565 format; unpack via OpenCV.
     QImage::Format imageFormat() const override { return QImage::Format_Invalid; }
     int conversionCode() const override { return cv::COLOR_BGR5652RGBA; }
+    int channelByteOffset(int) const override { return -1; }
+    bool channelBitLayout(int channel, quint16 &mask, int &shift, int &bits) const override
+    {
+        struct ChannelBits { quint16 mask; int shift; int bits; };
+        constexpr ChannelBits channels[] = {{0x001F, 0, 5}, {0x07E0, 5, 6}, {0xF800, 11, 5}};
+        if (channel < 0 || channel > 2)
+            return false;
+        mask = channels[channel].mask;
+        shift = channels[channel].shift;
+        bits = channels[channel].bits;
+        return true;
+    }
 };
 
 class Rgb555Decoder final : public PackedRgbDecoder
@@ -935,6 +1267,18 @@ protected:
     // Little-endian 16-bit R:G:B 5:5:5 samples match QImage::Format_RGB555.
     int bytesPerPixel() const override { return 2; }
     QImage::Format imageFormat() const override { return QImage::Format_RGB555; }
+    int channelByteOffset(int) const override { return -1; }
+    bool channelBitLayout(int channel, quint16 &mask, int &shift, int &bits) const override
+    {
+        struct ChannelBits { quint16 mask; int shift; int bits; };
+        constexpr ChannelBits channels[] = {{0x7C00, 10, 5}, {0x03E0, 5, 5}, {0x001F, 0, 5}};
+        if (channel < 0 || channel > 2)
+            return false;
+        mask = channels[channel].mask;
+        shift = channels[channel].shift;
+        bits = channels[channel].bits;
+        return true;
+    }
 };
 
 class Bgr555Decoder final : public PackedRgbDecoder
@@ -950,6 +1294,18 @@ protected:
     // QImage has no BGR555 format; unpack via OpenCV.
     QImage::Format imageFormat() const override { return QImage::Format_Invalid; }
     int conversionCode() const override { return cv::COLOR_BGR5552RGBA; }
+    int channelByteOffset(int) const override { return -1; }
+    bool channelBitLayout(int channel, quint16 &mask, int &shift, int &bits) const override
+    {
+        struct ChannelBits { quint16 mask; int shift; int bits; };
+        constexpr ChannelBits channels[] = {{0x001F, 0, 5}, {0x03E0, 5, 5}, {0x7C00, 10, 5}};
+        if (channel < 0 || channel > 2)
+            return false;
+        mask = channels[channel].mask;
+        shift = channels[channel].shift;
+        bits = channels[channel].bits;
+        return true;
+    }
 };
 
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
@@ -1004,6 +1360,17 @@ public:
         if (image.isNull())
             return std::unexpected(tr("Could not allocate the converted QImage."));
         return image;
+    }
+
+    QStringList planeNames() const override { return {QStringLiteral("Y")}; }
+
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const override
+    {
+        if (plane != 0)
+            return invalidPlane(plane);
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        return grayscalePlane(pixels, layout.width, layout.height, layout.stride);
     }
 };
 

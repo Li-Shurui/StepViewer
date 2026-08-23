@@ -64,6 +64,15 @@ public:
     virtual ImageResult convertToImage(const QByteArray &data,
                                        const RawImageLayout &layout) const = 0;
 
+    // Component plane access for separate plane viewing. planeNames()
+    // lists the logical planes (e.g. {"Y","U","V"} or {"R","G","B","A"});
+    // an empty list means plane viewing is not supported. extractPlane()
+    // returns plane i as a Format_Grayscale8 image at its native
+    // (possibly subsampled) resolution.
+    virtual QStringList planeNames() const { return {}; }
+    virtual ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                                     int plane) const;
+
     // Shared file loading, size-checked against expectedByteSize().
     // A file whose size is a multiple of the frame size is treated as a
     // multi-frame sequence; frameIndex selects which frame to read.

@@ -6,6 +6,9 @@
 
 #include "viewerinterfaces.h"
 
+#include "rawimagedecoder.h"
+
+#include <QByteArray>
 #include <QSizeF>
 #include <QString>
 
@@ -15,8 +18,6 @@ class QImage;
 class QLabel;
 class QSpinBox;
 class QTableWidget;
-class RawImageDecoder;
-struct RawImageLayout;
 
 class YuvViewer : public ViewerInterface
 {
@@ -46,6 +47,7 @@ private slots:
     void setupYuvUi();
     void reload();
     void onFormatChanged();
+    void onPlaneChanged();
     void zoomIn();
     void zoomOut();
     void resetZoom();
@@ -62,6 +64,8 @@ private:
     void doSetScaleFactor(qreal scaleFactor);
     void enableZoomActions();
     void updateFrameUi(qint64 frameCount);
+    void updatePlaneCombo();
+    int currentPlane() const;
 
     QLabel *m_imageLabel = nullptr;
     QLabel *m_widthLabel = nullptr;
@@ -69,7 +73,9 @@ private:
     QLabel *m_formatLabel = nullptr;
     QLabel *m_frameLabel = nullptr;
     QLabel *m_frameCountLabel = nullptr;
+    QLabel *m_planeLabel = nullptr;
     QComboBox *m_formatComboBox = nullptr;
+    QComboBox *m_planeComboBox = nullptr;
     QSpinBox *m_widthSpinBox = nullptr;
     QSpinBox *m_heightSpinBox = nullptr;
     QSpinBox *m_frameSpinBox = nullptr;
@@ -88,6 +94,8 @@ private:
     int m_fileScanline = 0;
     QString m_metadataError;
     qint64 m_frameCount = 1;
+    QByteArray m_rawData;
+    RawImageLayout m_layout;
     qreal m_scaleFactor = 1;
     qreal m_initialScaleFactor = 1;
     qreal m_minScaleFactor = 1;
