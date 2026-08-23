@@ -837,6 +837,24 @@ protected:
     QImage::Format imageFormat() const override { return QImage::Format_RGBX8888; }
 };
 
+class Bgra8888Decoder final : public PackedRgbDecoder
+{
+public:
+    QLatin1StringView id() const override { return "bgra8888"_L1; }
+    QString displayName() const override { return QStringLiteral("BGRA8888"); }
+    QString mimeType() const override { return "video/x-raw-bgra8888"_L1; }
+    QStringList fileExtensions() const override
+    {
+        return {"bgra8888"_L1, "BGRA8888"_L1, "bgra"_L1, "BGRA"_L1};
+    }
+
+protected:
+    int bytesPerPixel() const override { return 4; }
+    // QImage has no byte-ordered BGRA format; swap channels via OpenCV.
+    QImage::Format imageFormat() const override { return QImage::Format_Invalid; }
+    int conversionCode() const override { return cv::COLOR_BGRA2RGBA; }
+};
+
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
@@ -915,6 +933,7 @@ const QList<const RawImageDecoder *> &all()
         new Bgr888Decoder,
         new Rgba8888Decoder,
         new Rgbx8888Decoder,
+        new Bgra8888Decoder,
         new Y8Decoder,
     };
     return decoders;
