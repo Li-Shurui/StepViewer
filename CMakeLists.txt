@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(DocumentViewer VERSION 1.0 LANGUAGES CXX)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets LinguistTools
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Concurrent LinguistTools
              OPTIONAL_COMPONENTS PrintSupport Quick3D)
 
 qt_standard_project_setup(REQUIRES 6.8
