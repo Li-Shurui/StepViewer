@@ -36,6 +36,7 @@ int RawImageDecoder::defaultStride(int width) const
 
 RawImageDecoder::DataResult RawImageDecoder::readData(const QString &fileName,
                                                       const RawImageLayout &layout,
+                                                      qint64 frameIndex,
                                                       const ProgressCallback &progress) const
 {
     QFile file(fileName);
@@ -44,28 +45,40 @@ RawImageDecoder::DataResult RawImageDecoder::readData(const QString &fileName,
                                    .arg(file.errorString()));
     }
 
-    const qint64 expectedSize = expectedByteSize(layout);
-    const qint64 actualSize = file.size();
-    if (actualSize != expectedSize) {
+    const qint64 frameSize = expectedByteSize(layout);
+    const qint64 fileSize = file.size();
+    if (fileSize < frameSize || (fileSize % frameSize) != 0) {
         return std::unexpected(
-            tr("File size does not match the %1 layout. "
-               "Expected %2 bytes, found %3 bytes "
+            tr("File size does not match whole %1 frames. "
+               "Frame size is %2 bytes, file size is %3 bytes "
                "(width=%4, height=%5, stride=%6, scanline=%7).")
                 .arg(displayName())
-                .arg(expectedSize)
-                .arg(actualSize)
+                .arg(frameSize)
+                .arg(fileSize)
                 .arg(layout.width)
                 .arg(layout.height)
                 .arg(layout.stride)
                 .arg(layout.scanline));
     }
 
+    const qint64 frameCount = fileSize / frameSize;
+    if (frameIndex < 0 || frameIndex >= frameCount) {
+        return std::unexpected(tr("Frame %1 is out of range; the file contains %2 frames.")
+                                   .arg(frameIndex + 1)
+                                   .arg(frameCount));
+    }
+
+    if (!file.seek(frameIndex * frameSize)) {
+        return std::unexpected(tr("Failed while reading the file: %1")
+                                   .arg(file.errorString()));
+    }
+
     constexpr qint64 chunkSize = 4 * 1024 * 1024;
-    QByteArray data(expectedSize, Qt::Uninitialized);
+    QByteArray data(frameSize, Qt::Uninitialized);
     qint64 offset = 0;
-    while (offset < expectedSize) {
+    while (offset < frameSize) {
         const qint64 bytesRead = file.read(data.data() + offset,
-                                           qMin(chunkSize, expectedSize - offset));
+                                           qMin(chunkSize, frameSize - offset));
         if (bytesRead < 0) {
             return std::unexpected(tr("Failed while reading the file: %1")
                                        .arg(file.errorString()));
@@ -73,14 +86,14 @@ RawImageDecoder::DataResult RawImageDecoder::readData(const QString &fileName,
         if (bytesRead == 0)
             break;  // the file shrank mid-read; reported below
         offset += bytesRead;
-        if (progress && !progress(offset, expectedSize))
+        if (progress && !progress(offset, frameSize))
             return std::unexpected(tr("Loading canceled."));
     }
 
-    if (offset != expectedSize) {
+    if (offset != frameSize) {
         return std::unexpected(tr("The file read was incomplete. "
                                   "Expected %1 bytes, received %2 bytes.")
-                                   .arg(expectedSize)
+                                   .arg(frameSize)
                                    .arg(offset));
     }
 
