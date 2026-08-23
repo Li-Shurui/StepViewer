@@ -20,8 +20,9 @@ RawImageDecoder::LayoutResult RawImageDecoder::validateLayout(const RawImageLayo
                                    .arg(minimumDimension)
                                    .arg(maximumDimension));
     }
-    if (layout.stride > maximumDimension || layout.scanline > maximumDimension) {
-        return std::unexpected(tr("Stride and scanline must not exceed %1.")
+    if (layout.stride > maximumStride || layout.scanline > maximumDimension) {
+        return std::unexpected(tr("Stride must not exceed %1 and scanline must not exceed %2.")
+                                   .arg(maximumStride)
                                    .arg(maximumDimension));
     }
 
@@ -697,6 +698,97 @@ protected:
     bool chromaOrderIsUV() const override { return false; }
 };
 
+// Shared implementation for packed RGB formats: a single plane of
+// fixed-size pixels. Byte-ordered layouts map directly onto a QImage
+// format (no conversion); the rest go through an OpenCV conversion of
+// the CV_8UC(n) view (e.g. BGRA, which QImage cannot wrap directly).
+class PackedRgbDecoder : public RawImageDecoder
+{
+public:
+    LayoutResult validateLayout(const RawImageLayout &layout) const override
+    {
+        const LayoutResult baseResult = RawImageDecoder::validateLayout(layout);
+        if (!baseResult)
+            return baseResult;
+
+        if (layout.stride < layout.width * bytesPerPixel()) {
+            return std::unexpected(tr("%1 stride must be at least the width times %2 bytes. "
+                                      "Received width %3, stride %4.")
+                                       .arg(displayName())
+                                       .arg(bytesPerPixel())
+                                       .arg(layout.width)
+                                       .arg(layout.stride));
+        }
+        if (layout.scanline < layout.height) {
+            return std::unexpected(tr("%1 scanline must be at least the height. "
+                                      "Received height %2, scanline %3.")
+                                       .arg(displayName())
+                                       .arg(layout.height)
+                                       .arg(layout.scanline));
+        }
+
+        return layout;
+    }
+
+    qint64 expectedByteSize(const RawImageLayout &layout) const override
+    {
+        return qint64(layout.stride) * qint64(layout.scanline) * bytesPerPixel();
+    }
+
+    int defaultStride(int width) const override { return width * bytesPerPixel(); }
+
+    ImageResult convertToImage(const QByteArray &data,
+                               const RawImageLayout &layout) const override
+    {
+        if (imageFormat() != QImage::Format_Invalid) {
+            const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+            const QImage wrappedImage(pixels, layout.width, layout.height,
+                                      static_cast<qsizetype>(layout.stride), imageFormat());
+            QImage image = wrappedImage.copy();
+            if (image.isNull())
+                return std::unexpected(tr("Could not allocate the converted QImage."));
+            return image;
+        }
+
+        return runConversion(*this, [&]() -> ImageResult {
+            auto *pixels = reinterpret_cast<uchar *>(const_cast<char *>(data.constData()));
+            cv::Mat src(layout.height, layout.width, CV_MAKETYPE(CV_8U, bytesPerPixel()),
+                        pixels, static_cast<size_t>(layout.stride));
+            cv::Mat converted;
+            cv::cvtColor(src, converted, conversionCode());
+            return rgbaMatToImage(converted, layout, convertedFormat());
+        });
+    }
+
+protected:
+    virtual int bytesPerPixel() const = 0;
+
+    // Byte-ordered layouts map directly onto this QImage format.
+    // Return Format_Invalid to use the OpenCV conversion path instead.
+    virtual QImage::Format imageFormat() const = 0;
+
+    // OpenCV path: conversion code applied to the CV_8UC(n) view and
+    // the QImage format of the converted output.
+    virtual int conversionCode() const { return -1; }
+    virtual QImage::Format convertedFormat() const { return QImage::Format_RGBA8888; }
+};
+
+class Rgb888Decoder final : public PackedRgbDecoder
+{
+public:
+    QLatin1StringView id() const override { return "rgb888"_L1; }
+    QString displayName() const override { return QStringLiteral("RGB888"); }
+    QString mimeType() const override { return "video/x-raw-rgb888"_L1; }
+    QStringList fileExtensions() const override
+    {
+        return {"rgb888"_L1, "RGB888"_L1, "rgb"_L1, "RGB"_L1};
+    }
+
+protected:
+    int bytesPerPixel() const override { return 3; }
+    QImage::Format imageFormat() const override { return QImage::Format_RGB888; }
+};
+
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
@@ -771,6 +863,7 @@ const QList<const RawImageDecoder *> &all()
         new Nv61Decoder,
         new I444Decoder,
         new Yv24Decoder,
+        new Rgb888Decoder,
         new Y8Decoder,
     };
     return decoders;
