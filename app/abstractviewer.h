@@ -152,7 +152,7 @@ void AbstractViewer::startAsyncTask(Work &&work, Done &&done)
 
     // Keep our own future reference: QFutureWatcher does not expose a typed
     // takeResult(), and results of move-only types must be moved out.
-    const QFuture<Result> future = QtConcurrent::run(std::forward<Work>(work));
+    QFuture<Result> future = QtConcurrent::run(std::forward<Work>(work));
 
     connect(watcher, &QFutureWatcherBase::finished, this,
             [this, watcher, generation, future,
