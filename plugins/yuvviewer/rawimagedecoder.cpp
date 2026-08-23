@@ -889,6 +889,21 @@ protected:
     QImage::Format imageFormat() const override { return QImage::Format_RGB16; }
 };
 
+class Bgr565Decoder final : public PackedRgbDecoder
+{
+public:
+    QLatin1StringView id() const override { return "bgr565"_L1; }
+    QString displayName() const override { return QStringLiteral("BGR565"); }
+    QString mimeType() const override { return "video/x-raw-bgr565"_L1; }
+    QStringList fileExtensions() const override { return {"bgr565"_L1, "BGR565"_L1}; }
+
+protected:
+    int bytesPerPixel() const override { return 2; }
+    // QImage has no BGR565 format; unpack via OpenCV.
+    QImage::Format imageFormat() const override { return QImage::Format_Invalid; }
+    int conversionCode() const override { return cv::COLOR_BGR5652RGBA; }
+};
+
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
@@ -970,6 +985,7 @@ const QList<const RawImageDecoder *> &all()
         new Bgra8888Decoder,
         new Bgrx8888Decoder,
         new Rgb565Decoder,
+        new Bgr565Decoder,
         new Y8Decoder,
     };
     return decoders;
