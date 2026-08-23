@@ -384,6 +384,9 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
     connect(m_frameSpinBox, &QSpinBox::valueChanged, this, &YuvViewer::reload);
     m_frameCountLabel = new QLabel(toolBar);
 
+    connect(m_widthSpinBox, &QSpinBox::valueChanged, this, &YuvViewer::updateFormatMatches);
+    connect(m_heightSpinBox, &QSpinBox::valueChanged, this, &YuvViewer::updateFormatMatches);
+
     m_planeLabel = new QLabel(toolBar);
     m_planeComboBox = new QComboBox(toolBar);
     updatePlaneCombo();
@@ -432,6 +435,7 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
 
     clear();
     retranslate();
+    updateFormatMatches();
 }
 
 QStringList YuvViewer::supportedMimeTypes() const
@@ -709,6 +713,46 @@ int YuvViewer::currentPlane() const
 {
     // Combo index 0 is the composite view; planes are 0-based after it.
     return m_planeComboBox ? m_planeComboBox->currentIndex() - 1 : -1;
+}
+
+// Highlights the formats whose tight frame size divides the file size
+// evenly. This inverts the usual workflow: with unknown data, set the
+// expected width/height and pick one of the matching (bold) formats.
+void YuvViewer::updateFormatMatches()
+{
+    if (!m_formatComboBox || !m_file || !m_widthSpinBox || !m_heightSpinBox)
+        return;
+
+    const qint64 fileSize = QFileInfo(m_file->fileName()).size();
+    const int width = m_widthSpinBox->value();
+    const int height = m_heightSpinBox->value();
+
+    const QList<const RawImageDecoder *> &decoders = RawImageDecoders::all();
+    const QFont normalFont = m_formatComboBox->font();
+    QFont boldFont = normalFont;
+    boldFont.setBold(true);
+
+    for (int i = 0; i < decoders.size(); ++i) {
+        const RawImageDecoder *decoder = decoders.at(i);
+        // The heuristic assumes a tightly packed layout; padded files
+        // (stride/scanline tags) intentionally do not match.
+        const RawImageLayout tight{width, height, decoder->defaultStride(width), height};
+
+        qint64 frames = 0;
+        if (decoder->validateLayout(tight)) {
+            const qint64 frameSize = decoder->expectedByteSize(tight);
+            if (frameSize > 0 && fileSize >= frameSize && (fileSize % frameSize) == 0)
+                frames = fileSize / frameSize;
+        }
+
+        m_formatComboBox->setItemData(i, frames > 0 ? boldFont : normalFont, Qt::FontRole);
+        m_formatComboBox->setItemData(i,
+                                      frames > 0 ? tr("Matches the file size: %1 bytes per frame, %2 frames.")
+                                                     .arg(decoder->expectedByteSize(tight))
+                                                     .arg(frames)
+                                                 : QString(),
+                                      Qt::ToolTipRole);
+    }
 }
 
 void YuvViewer::onPlaneChanged()
