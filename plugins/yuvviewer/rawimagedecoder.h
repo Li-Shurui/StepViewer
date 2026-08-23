@@ -52,6 +52,12 @@ public:
     // Base implementation checks the dimension ranges only; formats with
     // alignment constraints (e.g. 4:2:0 chroma subsampling) override it.
     virtual LayoutResult validateLayout(const RawImageLayout &layout) const;
+
+    // Stride assumed when the file name does not specify one: the tight
+    // row size of the first plane. Packed formats override this because
+    // their rows carry more than one byte per pixel.
+    virtual int defaultStride(int width) const;
+
     virtual qint64 expectedByteSize(const RawImageLayout &layout) const = 0;
     virtual ImageResult convertToImage(const QByteArray &data,
                                        const RawImageLayout &layout) const = 0;
