@@ -123,6 +123,39 @@ RawImageDecoder::LayoutResult validateYuv420Layout(const RawImageDecoder &decode
     return layout;
 }
 
+// Shared layout validation for 4:2:2 formats (packed, planar and
+// semi-planar): horizontal-only chroma subsampling requires an even
+// width and an even stride, but imposes no constraint on the height.
+RawImageDecoder::LayoutResult validateYuv422Layout(const RawImageDecoder &decoder,
+                                                   const RawImageLayout &layout)
+{
+    const RawImageDecoder::LayoutResult baseResult = decoder.RawImageDecoder::validateLayout(layout);
+    if (!baseResult)
+        return baseResult;
+
+    if ((layout.width % 2) != 0) {
+        return std::unexpected(RawImageDecoder::tr("%1 width must be even. Received %2.")
+                                   .arg(decoder.displayName())
+                                   .arg(layout.width));
+    }
+    if (layout.stride < layout.width || (layout.stride % 2) != 0) {
+        return std::unexpected(RawImageDecoder::tr("%1 stride must be even and at least the width. "
+                                                   "Received width %2, stride %3.")
+                                   .arg(decoder.displayName())
+                                   .arg(layout.width)
+                                   .arg(layout.stride));
+    }
+    if (layout.scanline < layout.height) {
+        return std::unexpected(RawImageDecoder::tr("%1 scanline must be at least the height. "
+                                                   "Received height %2, scanline %3.")
+                                   .arg(decoder.displayName())
+                                   .arg(layout.height)
+                                   .arg(layout.scanline));
+    }
+
+    return layout;
+}
+
 // Wraps a converted RGBA Mat into a detached QImage.
 RawImageDecoder::ImageResult rgbaMatToImage(const cv::Mat &rgba, const RawImageLayout &layout)
 {
@@ -423,31 +456,7 @@ class PlanarYuv422Decoder : public RawImageDecoder
 public:
     LayoutResult validateLayout(const RawImageLayout &layout) const override
     {
-        const LayoutResult baseResult = RawImageDecoder::validateLayout(layout);
-        if (!baseResult)
-            return baseResult;
-
-        if ((layout.width % 2) != 0) {
-            return std::unexpected(tr("%1 width must be even. Received %2.")
-                                       .arg(displayName())
-                                       .arg(layout.width));
-        }
-        if (layout.stride < layout.width || (layout.stride % 2) != 0) {
-            return std::unexpected(tr("%1 stride must be even and at least the width. "
-                                      "Received width %2, stride %3.")
-                                       .arg(displayName())
-                                       .arg(layout.width)
-                                       .arg(layout.stride));
-        }
-        if (layout.scanline < layout.height) {
-            return std::unexpected(tr("%1 scanline must be at least the height. "
-                                      "Received height %2, scanline %3.")
-                                       .arg(displayName())
-                                       .arg(layout.height)
-                                       .arg(layout.scanline));
-        }
-
-        return layout;
+        return validateYuv422Layout(*this, layout);
     }
 
     qint64 expectedByteSize(const RawImageLayout &layout) const override
@@ -521,6 +530,72 @@ protected:
     bool chromaOrderIsUV() const override { return false; }
 };
 
+// Shared implementation for two-plane (semi-planar) YUV 4:2:2 formats:
+// a full-resolution Y plane followed by an interleaved chroma plane
+// with half the horizontal resolution and all lines of the Y plane.
+// Only the chroma byte order (UV vs VU) differs between them.
+class SemiPlanarYuv422Decoder : public RawImageDecoder
+{
+public:
+    LayoutResult validateLayout(const RawImageLayout &layout) const override
+    {
+        return validateYuv422Layout(*this, layout);
+    }
+
+    qint64 expectedByteSize(const RawImageLayout &layout) const override
+    {
+        return qint64(layout.stride) * qint64(layout.scanline) * 2;
+    }
+
+    ImageResult convertToImage(const QByteArray &data,
+                               const RawImageLayout &layout) const override
+    {
+        return runConversion(*this, [&]() -> ImageResult {
+            const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+            const uchar *uvPlane = pixels + qint64(layout.stride) * layout.scanline;
+            const int uOffset = chromaOrderIsUV() ? 0 : 1;
+
+            // Repack into a YUY2 macropixel stream for OpenCV.
+            QByteArray yuy2(qint64(layout.width) * layout.height * 2, Qt::Uninitialized);
+            auto *dst = reinterpret_cast<uchar *>(yuy2.data());
+            const int pairsPerRow = layout.width / 2;
+            for (int row = 0; row < layout.height; ++row) {
+                const uchar *yRow = pixels + qint64(row) * layout.stride;
+                const uchar *uvRow = uvPlane + qint64(row) * layout.stride;
+                uchar *out = dst + qint64(row) * layout.width * 2;
+                for (int pair = 0; pair < pairsPerRow; ++pair) {
+                    out[4 * pair]     = yRow[2 * pair];
+                    out[4 * pair + 1] = uvRow[2 * pair + uOffset];
+                    out[4 * pair + 2] = yRow[2 * pair + 1];
+                    out[4 * pair + 3] = uvRow[2 * pair + (1 - uOffset)];
+                }
+            }
+
+            cv::Mat yuv(layout.height, layout.width, CV_8UC2, yuy2.data(),
+                        static_cast<size_t>(layout.width) * 2);
+            cv::Mat rgba;
+            cv::cvtColor(yuv, rgba, cv::COLOR_YUV2RGBA_YUY2);
+            return rgbaMatToImage(rgba, layout);
+        });
+    }
+
+protected:
+    // NV16 interleaves U,V; NV61 interleaves V,U.
+    virtual bool chromaOrderIsUV() const = 0;
+};
+
+class Nv16Decoder final : public SemiPlanarYuv422Decoder
+{
+public:
+    QLatin1StringView id() const override { return "nv16"_L1; }
+    QString displayName() const override { return QStringLiteral("NV16"); }
+    QString mimeType() const override { return "video/x-raw-nv16"_L1; }
+    QStringList fileExtensions() const override { return {"nv16"_L1, "NV16"_L1}; }
+
+protected:
+    bool chromaOrderIsUV() const override { return true; }
+};
+
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
@@ -591,6 +666,7 @@ const QList<const RawImageDecoder *> &all()
         new YvyuDecoder,
         new I422Decoder,
         new Yv16Decoder,
+        new Nv16Decoder,
         new Y8Decoder,
     };
     return decoders;
