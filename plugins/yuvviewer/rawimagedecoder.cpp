@@ -805,6 +805,22 @@ protected:
     QImage::Format imageFormat() const override { return QImage::Format_BGR888; }
 };
 
+class Rgba8888Decoder final : public PackedRgbDecoder
+{
+public:
+    QLatin1StringView id() const override { return "rgba8888"_L1; }
+    QString displayName() const override { return QStringLiteral("RGBA8888"); }
+    QString mimeType() const override { return "video/x-raw-rgba8888"_L1; }
+    QStringList fileExtensions() const override
+    {
+        return {"rgba8888"_L1, "RGBA8888"_L1, "rgba"_L1, "RGBA"_L1};
+    }
+
+protected:
+    int bytesPerPixel() const override { return 4; }
+    QImage::Format imageFormat() const override { return QImage::Format_RGBA8888; }
+};
+
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
@@ -881,6 +897,7 @@ const QList<const RawImageDecoder *> &all()
         new Yv24Decoder,
         new Rgb888Decoder,
         new Bgr888Decoder,
+        new Rgba8888Decoder,
         new Y8Decoder,
     };
     return decoders;
