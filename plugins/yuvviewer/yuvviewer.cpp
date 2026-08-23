@@ -22,6 +22,9 @@
 #include <QLabel>
 #include <QLocale>
 #include <QMouseEvent>
+#include <QPaintEvent>
+#include <QPainter>
+#include <QPen>
 #include <QPixmap>
 #include <QRegularExpression>
 #include <QSignalBlocker>
@@ -150,13 +153,127 @@ struct LoadedFrame
 using LoadResult = std::expected<LoadedFrame, QString>;
 }
 
+// Image display widget for the YUV viewer. Unlike a QLabel with
+// scaledContents, painting is fully controlled here: nearest-neighbor
+// vs. smooth scaling, a pixel grid at high zoom levels, and text
+// prompts when no image is loaded. The widget reports the scaled image
+// size as its size hint so the enclosing scroll area adds scroll bars.
+class YuvImageWidget : public QFrame
+{
+public:
+    explicit YuvImageWidget(QWidget *parent = nullptr) : QFrame(parent) {}
+
+    const QImage &image() const { return m_image; }
+    QRectF imageRect() const { return m_imageRect; }
+
+    void setImage(const QImage &image)
+    {
+        m_image = image;
+        updateGeometry();
+        update();
+    }
+
+    void setText(const QString &text)
+    {
+        m_text = text;
+        update();
+    }
+
+    void setScaleFactor(qreal scaleFactor)
+    {
+        if (qFuzzyCompare(m_scaleFactor, scaleFactor))
+            return;
+        m_scaleFactor = scaleFactor;
+        updateGeometry();
+        update();
+    }
+
+    void setSmoothScaling(bool smooth)
+    {
+        m_smoothScaling = smooth;
+        update();
+    }
+
+    void setPixelGrid(bool grid)
+    {
+        m_pixelGrid = grid;
+        update();
+    }
+
+    QSize sizeHint() const override
+    {
+        if (m_image.isNull())
+            return QFrame::sizeHint();
+        const QSizeF logical = QSizeF(m_image.size()) / devicePixelRatioF();
+        return (logical * m_scaleFactor).toSize() + QSize(2 * frameWidth(), 2 * frameWidth());
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        QFrame::paintEvent(event);
+        QPainter painter(this);
+        const QRectF area = contentsRect();
+
+        if (m_image.isNull()) {
+            if (!m_text.isEmpty())
+                painter.drawText(area, Qt::AlignCenter | Qt::TextWordWrap, m_text);
+            return;
+        }
+
+        const qreal dpr = devicePixelRatioF();
+        const QSizeF targetSize = QSizeF(m_image.size()) / dpr * m_scaleFactor;
+        // Center within the viewport while the image is smaller than it;
+        // once larger, the widget itself is resized to the target size.
+        const QPointF topLeft(area.x() + qMax<qreal>(0, (area.width() - targetSize.width()) / 2),
+                              area.y() + qMax<qreal>(0, (area.height() - targetSize.height()) / 2));
+        m_imageRect = QRectF(topLeft, targetSize);
+
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, m_smoothScaling);
+        painter.drawImage(m_imageRect, m_image);
+
+        const qreal step = m_scaleFactor / dpr;  // widget pixels per image pixel
+        if (m_pixelGrid && step >= 4.0) {
+            QPen pen(QColor(128, 128, 128, 90));
+            pen.setCosmetic(true);
+            painter.setPen(pen);
+            const QRectF clip = event->rect();
+            const int firstCol = qMax(0, qFloor((clip.left() - topLeft.x()) / step));
+            const int lastCol = qMin(m_image.width(), qCeil((clip.right() - topLeft.x()) / step));
+            for (int col = firstCol; col <= lastCol; ++col) {
+                const qreal x = topLeft.x() + col * step;
+                painter.drawLine(QPointF(x, topLeft.y()),
+                                 QPointF(x, topLeft.y() + targetSize.height()));
+            }
+            const int firstRow = qMax(0, qFloor((clip.top() - topLeft.y()) / step));
+            const int lastRow = qMin(m_image.height(), qCeil((clip.bottom() - topLeft.y()) / step));
+            for (int row = firstRow; row <= lastRow; ++row) {
+                const qreal y = topLeft.y() + row * step;
+                painter.drawLine(QPointF(topLeft.x(), y),
+                                 QPointF(topLeft.x() + targetSize.width(), y));
+            }
+        }
+    }
+
+private:
+    QImage m_image;
+    QString m_text;
+    QRectF m_imageRect;
+    qreal m_scaleFactor = 1;
+    bool m_smoothScaling = false;
+    bool m_pixelGrid = true;
+};
+
 YuvViewer::YuvViewer()
     : m_reloadAction(new QAction(this)),
       m_prevFrameAction(new QAction(this)),
       m_nextFrameAction(new QAction(this)),
       m_zoomInAction(new QAction(this)),
       m_zoomOutAction(new QAction(this)),
-      m_resetZoomAction(new QAction(this))
+      m_resetZoomAction(new QAction(this)),
+      m_fitToWindowAction(new QAction(this)),
+      m_smoothScalingAction(new QAction(this)),
+      m_pixelGridAction(new QAction(this))
 {
     // OpenCV 4.12's MinGW AVX2 semi-planar YUV converters can fault on some
     // Windows systems instead of reporting an exception. Select the portable
@@ -196,25 +313,42 @@ YuvViewer::YuvViewer()
     m_resetZoomAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_0));
     connect(m_resetZoomAction, &QAction::triggered, this, &YuvViewer::resetZoom);
 
+    m_fitToWindowAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_9));
+    connect(m_fitToWindowAction, &QAction::triggered, this, &YuvViewer::fitToWindow);
+
+    // Nearest-neighbor is the default: raw image inspection cares about
+    // exact pixel values, not pretty interpolation.
+    m_smoothScalingAction->setCheckable(true);
+    connect(m_smoothScalingAction, &QAction::toggled, this, [this](bool checked) {
+        if (m_imageWidget)
+            m_imageWidget->setSmoothScaling(checked);
+    });
+
+    m_pixelGridAction->setCheckable(true);
+    m_pixelGridAction->setChecked(true);
+    connect(m_pixelGridAction, &QAction::toggled, this, [this](bool checked) {
+        if (m_imageWidget)
+            m_imageWidget->setPixelGrid(checked);
+    });
+
     m_prevFrameAction->setEnabled(false);
     m_nextFrameAction->setEnabled(false);
     m_zoomInAction->setEnabled(false);
     m_zoomOutAction->setEnabled(false);
     m_resetZoomAction->setEnabled(false);
+    m_fitToWindowAction->setEnabled(false);
 }
 
 YuvViewer::~YuvViewer() = default;
 
 void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
 {
-    m_imageLabel = new QLabel(parent);
-    m_imageLabel->setFrameShape(QFrame::Box);
-    m_imageLabel->setAlignment(Qt::AlignCenter);
-    m_imageLabel->setScaledContents(true);
-    m_imageLabel->setMouseTracking(true);
-    m_imageLabel->installEventFilter(this);
+    m_imageWidget = new YuvImageWidget(parent);
+    m_imageWidget->setFrameShape(QFrame::Box);
+    m_imageWidget->setMouseTracking(true);
+    m_imageWidget->installEventFilter(this);
 
-    AbstractViewer::init(file, m_imageLabel, mainWindow);
+    AbstractViewer::init(file, m_imageWidget, mainWindow);
 
     QToolBar *toolBar = addToolBar();
     m_widthLabel = new QLabel(toolBar);
@@ -273,6 +407,10 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
     toolBar->addAction(m_zoomInAction);
     toolBar->addAction(m_zoomOutAction);
     toolBar->addAction(m_resetZoomAction);
+    toolBar->addAction(m_fitToWindowAction);
+    toolBar->addSeparator();
+    toolBar->addAction(m_smoothScalingAction);
+    toolBar->addAction(m_pixelGridAction);
 
     m_hasFileLayout = false;
     m_fileWidth = m_fileHeight = m_fileStride = m_fileScanline = 0;
@@ -316,7 +454,7 @@ QStringList YuvViewer::supportedExtensions() const
 
 bool YuvViewer::hasContent() const
 {
-    return m_imageLabel && !m_imageLabel->pixmap().isNull();
+    return m_imageWidget && !m_imageWidget->image().isNull();
 }
 
 QByteArray YuvViewer::saveState() const
@@ -411,8 +549,7 @@ void YuvViewer::setupYuvUi()
         return;
     }
 
-    m_imageLabel->setText(prompt);
-    m_imageLabel->setWordWrap(true);
+    m_imageWidget->setText(prompt);
     statusMessage(prompt, tr("open"));
 }
 
@@ -457,8 +594,7 @@ void YuvViewer::reload()
     const qint64 frameIndex = frames > 0 ? qMin<qint64>(m_frameSpinBox->value() - 1, frames - 1) : 0;
     const int plane = currentPlane();
 
-    m_imageLabel->setText(tr("Loading..."));
-    m_imageLabel->setWordWrap(true);
+    m_imageWidget->setText(tr("Loading..."));
 
     startAsyncTaskWithProgress<LoadResult>(
         [fileName, loadLayout, decoder, frameIndex, plane](QPromise<LoadResult> &promise) {
@@ -600,12 +736,9 @@ void YuvViewer::onPlaneChanged()
 
 void YuvViewer::clear()
 {
-    if (m_imageLabel) {
-        m_imageLabel->setPixmap({});
-        m_imageLabel->clear();
-        m_imageLabel->setWordWrap(false);
-        m_imageLabel->setMinimumSize(0, 0);
-        m_imageLabel->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    if (m_imageWidget) {
+        m_imageWidget->setImage({});
+        m_imageWidget->setText({});
     }
 
     if (m_infoTable)
@@ -619,23 +752,20 @@ void YuvViewer::clear()
     m_zoomInAction->setEnabled(false);
     m_zoomOutAction->setEnabled(false);
     m_resetZoomAction->setEnabled(false);
+    m_fitToWindowAction->setEnabled(false);
     disablePrinting();
 }
 
 void YuvViewer::displayImage(const QImage &image)
 {
-    m_imageLabel->clear();
-    m_imageLabel->setWordWrap(false);
+    m_imageWidget->setText({});
     m_image = image;
 
-    const qreal devicePixelRatio = m_imageLabel->devicePixelRatioF();
+    const qreal devicePixelRatio = m_imageWidget->devicePixelRatioF();
     m_imageSize = QSizeF(image.size()) / devicePixelRatio;
+    m_imageWidget->setImage(image);
 
-    QPixmap pixmap = QPixmap::fromImage(image);
-    pixmap.setDevicePixelRatio(devicePixelRatio);
-    m_imageLabel->setPixmap(pixmap);
-
-    const QWidget *parent = m_imageLabel->parentWidget();
+    const QWidget *parent = m_imageWidget->parentWidget();
     const QSizeF targetSize = parent ? QSizeF(parent->size()) : m_imageSize;
     if (targetSize.width() > 0 && targetSize.height() > 0
         && (m_imageSize.width() > targetSize.width()
@@ -678,7 +808,7 @@ void YuvViewer::updateInfoTab(const QString &fileName, const RawImageLayout &lay
     addRow(tr("Frames"), locale.toString(m_frameCount));
 }
 
-// Maps a position in label coordinates to composite image coordinates.
+// Maps a position in widget coordinates to composite image coordinates.
 // A plane view shows the plane at its native (possibly subsampled)
 // resolution, so the displayed image is scaled back onto the layout.
 // Returns (-1,-1) when the position is outside the image.
@@ -687,9 +817,10 @@ QPoint YuvViewer::compositePosition(QPoint widgetPos) const
     if (m_image.isNull() || m_layout.width <= 0 || m_scaleFactor <= 0)
         return {-1, -1};
 
-    const qreal dpr = m_imageLabel->devicePixelRatioF();
-    const int dx = qFloor(widgetPos.x() * dpr / m_scaleFactor);
-    const int dy = qFloor(widgetPos.y() * dpr / m_scaleFactor);
+    const QRectF target = m_imageWidget->imageRect();
+    const qreal dpr = m_imageWidget->devicePixelRatioF();
+    const int dx = qFloor((widgetPos.x() - target.x()) * dpr / m_scaleFactor);
+    const int dy = qFloor((widgetPos.y() - target.y()) * dpr / m_scaleFactor);
     if (dx < 0 || dy < 0 || dx >= m_image.width() || dy >= m_image.height())
         return {-1, -1};
 
@@ -699,7 +830,7 @@ QPoint YuvViewer::compositePosition(QPoint widgetPos) const
 
 bool YuvViewer::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == m_imageLabel && m_decoder && !m_rawData.isEmpty()) {
+    if (watched == m_imageWidget && m_decoder && !m_rawData.isEmpty()) {
         switch (event->type()) {
         case QEvent::MouseMove: {
             const auto *mouseEvent = static_cast<const QMouseEvent *>(event);
@@ -734,11 +865,8 @@ void YuvViewer::reportError(const QString &message)
     }
 
     qWarning().noquote() << viewerName() + "/open:"_L1 << detailedMessage;
-    if (m_imageLabel) {
-        m_imageLabel->setText(detailedMessage);
-        m_imageLabel->setWordWrap(true);
-        m_imageLabel->setAlignment(Qt::AlignCenter);
-    }
+    if (m_imageWidget)
+        m_imageWidget->setText(detailedMessage);
     statusMessage(detailedMessage, tr("open"), 15000);
 }
 
@@ -751,7 +879,7 @@ void YuvViewer::setScaleFactor(qreal scaleFactor)
 void YuvViewer::doSetScaleFactor(qreal scaleFactor)
 {
     m_scaleFactor = scaleFactor;
-    m_imageLabel->setFixedSize((m_imageSize * m_scaleFactor).toSize());
+    m_imageWidget->setScaleFactor(scaleFactor);
     enableZoomActions();
 }
 
@@ -760,6 +888,7 @@ void YuvViewer::enableZoomActions()
     m_resetZoomAction->setEnabled(!qFuzzyCompare(m_scaleFactor, m_initialScaleFactor));
     m_zoomInAction->setEnabled(m_scaleFactor < m_maxScaleFactor);
     m_zoomOutAction->setEnabled(m_scaleFactor > m_minScaleFactor);
+    m_fitToWindowAction->setEnabled(!m_image.isNull());
 }
 
 void YuvViewer::zoomIn()
@@ -775,6 +904,20 @@ void YuvViewer::zoomOut()
 void YuvViewer::resetZoom()
 {
     setScaleFactor(m_initialScaleFactor);
+}
+
+void YuvViewer::fitToWindow()
+{
+    if (m_image.isNull() || m_imageSize.isEmpty())
+        return;
+
+    const QWidget *viewport = m_imageWidget->parentWidget();
+    const QSizeF available = viewport ? QSizeF(viewport->size()) : QSizeF();
+    if (available.width() <= 0 || available.height() <= 0)
+        return;
+
+    setScaleFactor(qMin(available.width() / m_imageSize.width(),
+                        available.height() / m_imageSize.height()));
 }
 
 void YuvViewer::retranslate()
@@ -798,6 +941,9 @@ void YuvViewer::retranslate()
     m_zoomInAction->setText(tr("Zoom &In"));
     m_zoomOutAction->setText(tr("Zoom &Out"));
     m_resetZoomAction->setText(tr("Reset Zoom"));
+    m_fitToWindowAction->setText(tr("&Fit to Window"));
+    m_smoothScalingAction->setText(tr("&Smooth Scaling"));
+    m_pixelGridAction->setText(tr("Pixel &Grid"));
 
     if (m_infoTable && m_uiAssets.tabs) {
         const int index = m_uiAssets.tabs->indexOf(m_infoTable);

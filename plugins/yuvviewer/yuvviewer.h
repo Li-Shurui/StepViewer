@@ -18,6 +18,7 @@ class QImage;
 class QLabel;
 class QSpinBox;
 class QTableWidget;
+class YuvImageWidget;
 
 class YuvViewer : public ViewerInterface
 {
@@ -52,6 +53,7 @@ private slots:
     void zoomIn();
     void zoomOut();
     void resetZoom();
+    void fitToWindow();
 
 private:
     void retranslate() override;
@@ -69,7 +71,7 @@ private:
     int currentPlane() const;
     QPoint compositePosition(QPoint widgetPos) const;
 
-    QLabel *m_imageLabel = nullptr;
+    YuvImageWidget *m_imageWidget = nullptr;
     QLabel *m_widthLabel = nullptr;
     QLabel *m_heightLabel = nullptr;
     QLabel *m_formatLabel = nullptr;
@@ -88,6 +90,9 @@ private:
     QAction *m_zoomInAction = nullptr;
     QAction *m_zoomOutAction = nullptr;
     QAction *m_resetZoomAction = nullptr;
+    QAction *m_fitToWindowAction = nullptr;
+    QAction *m_smoothScalingAction = nullptr;
+    QAction *m_pixelGridAction = nullptr;
     const RawImageDecoder *m_decoder = nullptr;
     bool m_hasFileLayout = false;
     int m_fileWidth = 0;
