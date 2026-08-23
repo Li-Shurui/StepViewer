@@ -10,6 +10,8 @@ set_target_properties(txtviewer PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/.."
 )
 
+target_compile_features(txtviewer PRIVATE cxx_std_23)
+
 target_link_libraries(txtviewer PRIVATE
     Qt6::Core
     Qt6::Gui

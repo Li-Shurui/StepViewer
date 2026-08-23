@@ -18,6 +18,8 @@
 
 #include <QDir>
 
+#include <expected>
+
 #ifdef DOCUMENTVIEWER_PRINTSUPPORT
 #include <QPrinter>
 #include <QPrintDialog>
@@ -113,29 +115,34 @@ void TxtViewer::setupTxtUi()
 void TxtViewer::openFile()
 {
     const QString type = tr("open");
-    if (!m_file->open(QFile::ReadOnly | QFile::Text)) {
-        statusMessage(tr("Cannot read file %1:\n%2.")
-                      .arg(QDir::toNativeSeparators(m_file->fileName()),
-                           m_file->errorString()), type);
-        return;
-    }
+    const QString fileName = m_file->fileName();
 
-    QTextStream in(m_file.get());
-#if QT_CONFIG(cursor)
-    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
-#endif
     if (!m_textEdit->toPlainText().isEmpty()) {
         m_textEdit->clear();
         disablePrinting();
     }
-    m_textEdit->setPlainText(in.readAll());
-#if QT_CONFIG(cursor)
-    QGuiApplication::restoreOverrideCursor();
-#endif
 
-    statusMessage(tr("File %1 loaded.")
-                  .arg(QDir::toNativeSeparators(m_file->fileName())), type);
-    maybeEnablePrinting();
+    // Read the file on a worker thread; the worker opens its own QFile
+    // because QFile objects must not be shared across threads.
+    startAsyncTask(
+        [fileName]() -> std::expected<QString, QString> {
+            QFile file(fileName);
+            if (!file.open(QFile::ReadOnly | QFile::Text))
+                return std::unexpected(file.errorString());
+            QTextStream in(&file);
+            return in.readAll();
+        },
+        [this, fileName, type](std::expected<QString, QString> result) {
+            if (!result) {
+                statusMessage(tr("Cannot read file %1:\n%2.")
+                              .arg(QDir::toNativeSeparators(fileName), result.error()), type);
+                return;
+            }
+            m_textEdit->setPlainText(*result);
+            statusMessage(tr("File %1 loaded.")
+                          .arg(QDir::toNativeSeparators(fileName)), type);
+            maybeEnablePrinting();
+        });
 }
 //! [open]
 

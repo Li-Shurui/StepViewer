@@ -51,7 +51,8 @@ private slots:
 //! [pluginPrivateMembers]
 private:
     void retranslate() override;
-    bool openJsonFile();
+    void openJsonFile();
+    void setupBookmarks();
 
     QTreeView *m_tree = nullptr;
     QListWidget *m_toplevel = nullptr;
@@ -94,6 +95,8 @@ class JsonItemModel : public QAbstractItemModel
 public:
     explicit JsonItemModel(QObject *parent = nullptr);
     JsonItemModel(const QJsonDocument& doc, QObject *parent = nullptr);
+    // Takes ownership of a tree built beforehand (e.g. on a worker thread).
+    JsonItemModel(JsonTreeItem *rootItem, QObject *parent = nullptr);
     ~JsonItemModel();
     QVariant data(const QModelIndex &index, int role) const override;
     QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
