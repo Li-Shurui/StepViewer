@@ -8,6 +8,8 @@
 
 #include <QFile>
 
+#include <cstring>
+
 using namespace Qt::StringLiterals;
 
 RawImageDecoder::LayoutResult RawImageDecoder::validateLayout(const RawImageLayout &layout) const
@@ -81,6 +83,78 @@ RawImageDecoder::DataResult RawImageDecoder::readData(const QString &fileName,
 
 namespace {
 
+// Shared layout validation for 4:2:0 formats (semi-planar and planar):
+// 2x2 chroma subsampling requires even dimensions, stride and scanline.
+RawImageDecoder::LayoutResult validateYuv420Layout(const RawImageDecoder &decoder,
+                                                   const RawImageLayout &layout)
+{
+    // Qualified call: always the base implementation, no virtual dispatch.
+    const RawImageDecoder::LayoutResult baseResult = decoder.RawImageDecoder::validateLayout(layout);
+    if (!baseResult)
+        return baseResult;
+
+    if ((layout.width % 2) != 0 || (layout.height % 2) != 0) {
+        return std::unexpected(RawImageDecoder::tr("%1 width and height must both be even. "
+                                                   "Received %2x%3.")
+                                   .arg(decoder.displayName())
+                                   .arg(layout.width)
+                                   .arg(layout.height));
+    }
+    if (layout.stride < layout.width || (layout.stride % 2) != 0) {
+        return std::unexpected(RawImageDecoder::tr("%1 stride must be even and at least the width. "
+                                                   "Received width %2, stride %3.")
+                                   .arg(decoder.displayName())
+                                   .arg(layout.width)
+                                   .arg(layout.stride));
+    }
+    if (layout.scanline < layout.height || (layout.scanline % 2) != 0) {
+        return std::unexpected(RawImageDecoder::tr("%1 scanline must be even and at least the height. "
+                                                   "Received height %2, scanline %3.")
+                                   .arg(decoder.displayName())
+                                   .arg(layout.height)
+                                   .arg(layout.scanline));
+    }
+
+    return layout;
+}
+
+// Wraps a converted RGBA Mat into a detached QImage.
+RawImageDecoder::ImageResult rgbaMatToImage(const cv::Mat &rgba, const RawImageLayout &layout)
+{
+    if (rgba.empty() || rgba.cols != layout.width || rgba.rows != layout.height) {
+        return std::unexpected(RawImageDecoder::tr(
+            "OpenCV returned an empty image or unexpected dimensions."));
+    }
+
+    const QImage wrappedImage(rgba.data, rgba.cols, rgba.rows,
+                              static_cast<qsizetype>(rgba.step),
+                              QImage::Format_RGBA8888);
+    QImage image = wrappedImage.copy();
+    if (image.isNull())
+        return std::unexpected(RawImageDecoder::tr("Could not allocate the converted QImage."));
+    return image;
+}
+
+// Runs a YUV->RGBA conversion, mapping exceptions to error results.
+template <typename Conversion>
+RawImageDecoder::ImageResult runConversion(const RawImageDecoder &decoder,
+                                           Conversion &&conversion)
+{
+    try {
+        return conversion();
+    } catch (const cv::Exception &exception) {
+        return std::unexpected(RawImageDecoder::tr("OpenCV conversion failed: %1")
+                                   .arg(QString::fromLocal8Bit(exception.what())));
+    } catch (const std::exception &exception) {
+        return std::unexpected(RawImageDecoder::tr("%1 conversion failed: %2")
+                                   .arg(decoder.displayName(),
+                                        QString::fromLocal8Bit(exception.what())));
+    } catch (...) {
+        return std::unexpected(RawImageDecoder::tr("%1 conversion failed with an unknown exception.")
+                                   .arg(decoder.displayName()));
+    }
+}
+
 // Shared implementation for two-plane (semi-planar) YUV 4:2:0 formats:
 // a full-resolution Y plane followed by an interleaved 2x2-subsampled
 // chroma plane. Only the chroma order (UV vs VU) differs between them.
@@ -89,33 +163,7 @@ class SemiPlanarYuv420Decoder : public RawImageDecoder
 public:
     LayoutResult validateLayout(const RawImageLayout &layout) const override
     {
-        const LayoutResult baseResult = RawImageDecoder::validateLayout(layout);
-        if (!baseResult)
-            return baseResult;
-
-        if ((layout.width % 2) != 0 || (layout.height % 2) != 0) {
-            return std::unexpected(tr("%1 width and height must both be even. "
-                                      "Received %2x%3.")
-                                       .arg(displayName())
-                                       .arg(layout.width)
-                                       .arg(layout.height));
-        }
-        if (layout.stride < layout.width || (layout.stride % 2) != 0) {
-            return std::unexpected(tr("%1 stride must be even and at least the width. "
-                                      "Received width %2, stride %3.")
-                                       .arg(displayName())
-                                       .arg(layout.width)
-                                       .arg(layout.stride));
-        }
-        if (layout.scanline < layout.height || (layout.scanline % 2) != 0) {
-            return std::unexpected(tr("%1 scanline must be even and at least the height. "
-                                      "Received height %2, scanline %3.")
-                                       .arg(displayName())
-                                       .arg(layout.height)
-                                       .arg(layout.scanline));
-        }
-
-        return layout;
+        return validateYuv420Layout(*this, layout);
     }
 
     qint64 expectedByteSize(const RawImageLayout &layout) const override
@@ -126,7 +174,7 @@ public:
     ImageResult convertToImage(const QByteArray &data,
                                const RawImageLayout &layout) const override
     {
-        try {
+        return runConversion(*this, [&]() -> ImageResult {
             auto *pixels = reinterpret_cast<uchar *>(const_cast<char *>(data.constData()));
             const qint64 yPlaneBytes = qint64(layout.stride) * qint64(layout.scanline);
 
@@ -136,30 +184,8 @@ public:
                             pixels + yPlaneBytes, static_cast<size_t>(layout.stride));
             cv::Mat rgba;
             cv::cvtColorTwoPlane(yPlane, uvPlane, rgba, conversionCode());
-
-            if (rgba.empty() || rgba.cols != layout.width || rgba.rows != layout.height) {
-                return std::unexpected(tr(
-                    "OpenCV returned an empty image or unexpected dimensions."));
-            }
-
-            const QImage wrappedImage(rgba.data, rgba.cols, rgba.rows,
-                                      static_cast<qsizetype>(rgba.step),
-                                      QImage::Format_RGBA8888);
-            QImage image = wrappedImage.copy();
-            if (image.isNull())
-                return std::unexpected(tr("Could not allocate the converted QImage."));
-            return image;
-        } catch (const cv::Exception &exception) {
-            return std::unexpected(tr("OpenCV conversion failed: %1")
-                                       .arg(QString::fromLocal8Bit(exception.what())));
-        } catch (const std::exception &exception) {
-            return std::unexpected(tr("%1 conversion failed: %2")
-                                       .arg(displayName(),
-                                            QString::fromLocal8Bit(exception.what())));
-        } catch (...) {
-            return std::unexpected(tr("%1 conversion failed with an unknown exception.")
-                                       .arg(displayName()));
-        }
+            return rgbaMatToImage(rgba, layout);
+        });
     }
 
 protected:
@@ -189,6 +215,87 @@ public:
 
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_NV21; }
+};
+
+// Shared implementation for three-plane (planar) YUV 4:2:0 formats:
+// a full-resolution Y plane followed by the 2x2-subsampled U and V
+// planes, each with half the stride and half the lines of the Y plane.
+// Only the chroma plane order (U,V vs V,U) differs between them.
+class PlanarYuv420Decoder : public RawImageDecoder
+{
+public:
+    LayoutResult validateLayout(const RawImageLayout &layout) const override
+    {
+        return validateYuv420Layout(*this, layout);
+    }
+
+    qint64 expectedByteSize(const RawImageLayout &layout) const override
+    {
+        return qint64(layout.stride) * qint64(layout.scanline) * 3 / 2;
+    }
+
+    ImageResult convertToImage(const QByteArray &data,
+                               const RawImageLayout &layout) const override
+    {
+        return runConversion(*this, [&]() -> ImageResult {
+            const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+
+            // OpenCV's three-plane conversion assumes one tightly packed
+            // buffer, so padded planes are repacked into a tight copy.
+            const uchar *src = pixels;
+            QByteArray tightBuffer;
+            if (layout.stride != layout.width || layout.scanline != layout.height) {
+                const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+                const qint64 chromaPlaneBytes = qint64(layout.stride / 2)
+                                              * (layout.scanline / 2);
+                const uchar *planeSrc[3] = {pixels,
+                                            pixels + yPlaneBytes,
+                                            pixels + yPlaneBytes + chromaPlaneBytes};
+                const int planeStride[3] = {layout.stride,
+                                            layout.stride / 2,
+                                            layout.stride / 2};
+                const int planeRows[3] = {layout.height,
+                                          layout.height / 2,
+                                          layout.height / 2};
+                const int planeBytes[3] = {layout.width,
+                                           layout.width / 2,
+                                           layout.width / 2};
+
+                tightBuffer.resize(qint64(layout.width) * layout.height * 3 / 2);
+                auto *dst = reinterpret_cast<uchar *>(tightBuffer.data());
+                for (int plane = 0; plane < 3; ++plane) {
+                    for (int row = 0; row < planeRows[plane]; ++row) {
+                        memcpy(dst, planeSrc[plane] + qint64(row) * planeStride[plane],
+                               size_t(planeBytes[plane]));
+                        dst += planeBytes[plane];
+                    }
+                }
+                src = reinterpret_cast<const uchar *>(tightBuffer.constData());
+            }
+
+            cv::Mat yuv(layout.height * 3 / 2, layout.width, CV_8UC1,
+                        const_cast<uchar *>(src));
+            cv::Mat rgba;
+            cv::cvtColor(yuv, rgba, conversionCode());
+            return rgbaMatToImage(rgba, layout);
+        });
+    }
+
+protected:
+    // cv::COLOR_YUV2RGBA_I420 / cv::COLOR_YUV2RGBA_YV12 / ...
+    virtual int conversionCode() const = 0;
+};
+
+class I420Decoder final : public PlanarYuv420Decoder
+{
+public:
+    QLatin1StringView id() const override { return "i420"_L1; }
+    QString displayName() const override { return QStringLiteral("I420"); }
+    QString mimeType() const override { return "video/x-raw-i420"_L1; }
+    QStringList fileExtensions() const override { return {"i420"_L1, "I420"_L1}; }
+
+protected:
+    int conversionCode() const override { return cv::COLOR_YUV2RGBA_I420; }
 };
 
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
@@ -254,6 +361,7 @@ const QList<const RawImageDecoder *> &all()
     static const QList<const RawImageDecoder *> decoders = {
         new Nv12Decoder,
         new Nv21Decoder,
+        new I420Decoder,
         new Y8Decoder,
     };
     return decoders;
