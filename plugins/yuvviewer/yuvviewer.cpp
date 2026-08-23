@@ -12,6 +12,7 @@
 #include <QDataStream>
 #include <QDebug>
 #include <QDir>
+#include <QEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QFrame>
@@ -20,10 +21,12 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QLocale>
+#include <QMouseEvent>
 #include <QPixmap>
 #include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStatusBar>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QToolBar>
@@ -208,6 +211,8 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
     m_imageLabel->setFrameShape(QFrame::Box);
     m_imageLabel->setAlignment(Qt::AlignCenter);
     m_imageLabel->setScaledContents(true);
+    m_imageLabel->setMouseTracking(true);
+    m_imageLabel->installEventFilter(this);
 
     AbstractViewer::init(file, m_imageLabel, mainWindow);
 
@@ -608,6 +613,7 @@ void YuvViewer::clear()
 
     m_rawData.clear();
     m_layout = {};
+    m_image = {};
     m_imageSize = {};
     m_maxScaleFactor = m_minScaleFactor = m_initialScaleFactor = m_scaleFactor = 1;
     m_zoomInAction->setEnabled(false);
@@ -620,6 +626,7 @@ void YuvViewer::displayImage(const QImage &image)
 {
     m_imageLabel->clear();
     m_imageLabel->setWordWrap(false);
+    m_image = image;
 
     const qreal devicePixelRatio = m_imageLabel->devicePixelRatioF();
     m_imageSize = QSizeF(image.size()) / devicePixelRatio;
@@ -669,6 +676,53 @@ void YuvViewer::updateInfoTab(const QString &fileName, const RawImageLayout &lay
     addRow(tr("Frame size"), locale.formattedDataSize(decoder->expectedByteSize(layout)));
     addRow(tr("File size"), locale.formattedDataSize(QFileInfo(fileName).size()));
     addRow(tr("Frames"), locale.toString(m_frameCount));
+}
+
+// Maps a position in label coordinates to composite image coordinates.
+// A plane view shows the plane at its native (possibly subsampled)
+// resolution, so the displayed image is scaled back onto the layout.
+// Returns (-1,-1) when the position is outside the image.
+QPoint YuvViewer::compositePosition(QPoint widgetPos) const
+{
+    if (m_image.isNull() || m_layout.width <= 0 || m_scaleFactor <= 0)
+        return {-1, -1};
+
+    const qreal dpr = m_imageLabel->devicePixelRatioF();
+    const int dx = qFloor(widgetPos.x() * dpr / m_scaleFactor);
+    const int dy = qFloor(widgetPos.y() * dpr / m_scaleFactor);
+    if (dx < 0 || dy < 0 || dx >= m_image.width() || dy >= m_image.height())
+        return {-1, -1};
+
+    return {dx * m_layout.width / m_image.width(),
+            dy * m_layout.height / m_image.height()};
+}
+
+bool YuvViewer::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_imageLabel && m_decoder && !m_rawData.isEmpty()) {
+        switch (event->type()) {
+        case QEvent::MouseMove: {
+            const auto *mouseEvent = static_cast<const QMouseEvent *>(event);
+            const QPoint pos = compositePosition(mouseEvent->position().toPoint());
+            if (pos.x() >= 0) {
+                statusMessage(tr("(%1, %2)  %3")
+                                  .arg(pos.x())
+                                  .arg(pos.y())
+                                  .arg(m_decoder->describePixel(m_rawData, m_layout,
+                                                                pos.x(), pos.y())),
+                              tr("probe"), 0);
+            }
+            return false;
+        }
+        case QEvent::Leave:
+            if (statusBar())
+                statusBar()->clearMessage();
+            return false;
+        default:
+            break;
+        }
+    }
+    return AbstractViewer::eventFilter(watched, event);
 }
 
 void YuvViewer::reportError(const QString &message)

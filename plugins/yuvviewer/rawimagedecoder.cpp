@@ -42,6 +42,12 @@ RawImageDecoder::ImageResult RawImageDecoder::extractPlane(const QByteArray &,
                                .arg(displayName()));
 }
 
+QString RawImageDecoder::describePixel(const QByteArray &, const RawImageLayout &,
+                                       int, int) const
+{
+    return {};
+}
+
 RawImageDecoder::DataResult RawImageDecoder::readData(const QString &fileName,
                                                       const RawImageLayout &layout,
                                                       qint64 frameIndex,
@@ -270,6 +276,21 @@ RawImageDecoder::ImageResult invalidPlane(int plane)
     return std::unexpected(RawImageDecoder::tr("Invalid plane index %1.").arg(plane));
 }
 
+QString describeYuv(int y, int u, int v)
+{
+    return RawImageDecoder::tr("Y=%1 U=%2 V=%3").arg(y).arg(u).arg(v);
+}
+
+QString describeRgb(int r, int g, int b)
+{
+    return RawImageDecoder::tr("R=%1 G=%2 B=%3").arg(r).arg(g).arg(b);
+}
+
+QString describeRgba(int r, int g, int b, int a)
+{
+    return RawImageDecoder::tr("R=%1 G=%2 B=%3 A=%4").arg(r).arg(g).arg(b).arg(a);
+}
+
 // Shared implementation for two-plane (semi-planar) YUV 4:2:0 formats:
 // a full-resolution Y plane followed by an interleaved 2x2-subsampled
 // chroma plane. Only the chroma order (UV vs VU) differs between them.
@@ -325,6 +346,19 @@ public:
         default:
             return invalidPlane(plane);
         }
+    }
+
+    QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                          int x, int y) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        const int luma = pixels[qint64(y) * layout.stride + x];
+        const uchar *chroma = pixels + yPlaneBytes + qint64(y / 2) * layout.stride
+                              + (x / 2) * 2;
+        const int u = chroma[chromaOrderIsUV() ? 0 : 1];
+        const int v = chroma[chromaOrderIsUV() ? 1 : 0];
+        return describeYuv(luma, u, v);
     }
 
 protected:
@@ -451,6 +485,22 @@ public:
         }
     }
 
+    QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                          int x, int y) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        const qint64 chromaPlaneBytes = qint64(layout.stride / 2) * (layout.scanline / 2);
+        const uchar *uPlane = pixels + yPlaneBytes
+                              + (chromaOrderIsUV() ? 0 : chromaPlaneBytes);
+        const uchar *vPlane = pixels + yPlaneBytes
+                              + (chromaOrderIsUV() ? chromaPlaneBytes : 0);
+        const int luma = pixels[qint64(y) * layout.stride + x];
+        const int u = uPlane[qint64(y / 2) * (layout.stride / 2) + x / 2];
+        const int v = vPlane[qint64(y / 2) * (layout.stride / 2) + x / 2];
+        return describeYuv(luma, u, v);
+    }
+
 protected:
     // cv::COLOR_YUV2RGBA_I420 / cv::COLOR_YUV2RGBA_YV12 / ...
     virtual int conversionCode() const = 0;
@@ -564,6 +614,16 @@ public:
         default:
             return invalidPlane(plane);
         }
+    }
+
+    QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                          int x, int y) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const auto offsets = componentOffsets();
+        const uchar *macropixel = pixels + qint64(y) * layout.stride + (x / 2) * 4;
+        return describeYuv(macropixel[offsets[0]], macropixel[offsets[1]],
+                           macropixel[offsets[2]]);
     }
 
 protected:
@@ -696,6 +756,22 @@ public:
         }
     }
 
+    QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                          int x, int y) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        const qint64 chromaPlaneBytes = qint64(layout.stride / 2) * layout.scanline;
+        const uchar *uPlane = pixels + yPlaneBytes
+                              + (chromaOrderIsUV() ? 0 : chromaPlaneBytes);
+        const uchar *vPlane = pixels + yPlaneBytes
+                              + (chromaOrderIsUV() ? chromaPlaneBytes : 0);
+        const int luma = pixels[qint64(y) * layout.stride + x];
+        const int u = uPlane[qint64(y) * (layout.stride / 2) + x / 2];
+        const int v = vPlane[qint64(y) * (layout.stride / 2) + x / 2];
+        return describeYuv(luma, u, v);
+    }
+
 protected:
     // I422 stores Y,U,V planes; YV16 stores Y,V,U.
     virtual bool chromaOrderIsUV() const = 0;
@@ -796,6 +872,18 @@ public:
         default:
             return invalidPlane(plane);
         }
+    }
+
+    QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                          int x, int y) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        const int luma = pixels[qint64(y) * layout.stride + x];
+        const uchar *chroma = pixels + yPlaneBytes + qint64(y) * layout.stride + (x / 2) * 2;
+        const int u = chroma[chromaOrderIsUV() ? 0 : 1];
+        const int v = chroma[chromaOrderIsUV() ? 1 : 0];
+        return describeYuv(luma, u, v);
     }
 
 protected:
@@ -911,6 +999,19 @@ public:
         default:
             return invalidPlane(plane);
         }
+    }
+
+    QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                          int x, int y) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 planeBytes = qint64(layout.stride) * layout.scanline;
+        const uchar *uPlane = pixels + (chromaOrderIsUV() ? planeBytes : 2 * planeBytes);
+        const uchar *vPlane = pixels + (chromaOrderIsUV() ? 2 * planeBytes : planeBytes);
+        const int luma = pixels[qint64(y) * layout.stride + x];
+        const int u = uPlane[qint64(y) * layout.stride + x];
+        const int v = vPlane[qint64(y) * layout.stride + x];
+        return describeYuv(luma, u, v);
     }
 
 protected:
@@ -1035,6 +1136,37 @@ public:
                               mask, shift, bits);
         }
         return invalidPlane(plane);
+    }
+
+    QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                          int x, int y) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const uchar *row = pixels + qint64(y) * layout.stride;
+        if (bytesPerPixel() != 2) {
+            const uchar *pixel = row + x * bytesPerPixel();
+            const int r = pixel[channelByteOffset(0)];
+            const int g = pixel[channelByteOffset(1)];
+            const int b = pixel[channelByteOffset(2)];
+            if (bytesPerPixel() == 4)
+                return describeRgba(r, g, b, pixel[channelByteOffset(3)]);
+            return describeRgb(r, g, b);
+        }
+
+        quint16 pixel;
+        memcpy(&pixel, row + 2 * x, sizeof(pixel));
+        int channels[3] = {0, 0, 0};
+        for (int channel = 0; channel < 3; ++channel) {
+            quint16 mask = 0;
+            int shift = 0;
+            int bits = 0;
+            if (channelBitLayout(channel, mask, shift, bits)) {
+                const int value = (pixel & mask) >> shift;
+                const int maxValue = (1 << bits) - 1;
+                channels[channel] = (value * 255 + maxValue / 2) / maxValue;
+            }
+        }
+        return describeRgb(channels[0], channels[1], channels[2]);
     }
 
 protected:
@@ -1371,6 +1503,13 @@ public:
             return invalidPlane(plane);
         const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
         return grayscalePlane(pixels, layout.width, layout.height, layout.stride);
+    }
+
+    QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                          int x, int y) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        return tr("Y=%1").arg(pixels[qint64(y) * layout.stride + x]);
     }
 };
 
