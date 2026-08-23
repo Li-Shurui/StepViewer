@@ -14,67 +14,67 @@
         <translation>值</translation>
     </message>
     <message>
-        <location filename="abstractviewer.cpp" line="130"/>
+        <location filename="abstractviewer.cpp" line="141"/>
         <source>Cannot open the file: %1</source>
         <translation>无法打开文件：%1</translation>
     </message>
     <message>
-        <location filename="abstractviewer.cpp" line="142"/>
+        <location filename="abstractviewer.cpp" line="153"/>
         <source>Failed while reading the file: %1</source>
         <translation>读取文件失败：%1</translation>
     </message>
     <message>
-        <location filename="abstractviewer.cpp" line="149"/>
+        <location filename="abstractviewer.cpp" line="160"/>
         <source>Loading canceled.</source>
         <translation>加载已取消。</translation>
     </message>
     <message>
-        <location filename="abstractviewer.cpp" line="153"/>
+        <location filename="abstractviewer.cpp" line="164"/>
         <source>The file read was incomplete. Expected %1 bytes, received %2 bytes.</source>
         <translation>文件读取不完整。预期 %1 字节，实际收到 %2 字节。</translation>
     </message>
     <message>
-        <location filename="abstractviewer.cpp" line="341"/>
+        <location filename="abstractviewer.cpp" line="354"/>
         <source>Printing</source>
         <translation>打印</translation>
     </message>
     <message>
-        <location filename="abstractviewer.cpp" line="343"/>
+        <location filename="abstractviewer.cpp" line="356"/>
         <source>No content to print.</source>
         <translation>没有可打印的内容。</translation>
     </message>
     <message>
-        <location filename="abstractviewer.cpp" line="349"/>
+        <location filename="abstractviewer.cpp" line="362"/>
         <source>Print Document</source>
         <translation>打印文档</translation>
     </message>
     <message>
-        <location filename="abstractviewer.cpp" line="353"/>
+        <location filename="abstractviewer.cpp" line="366"/>
         <source>Printing canceled!</source>
         <translation>打印已取消！</translation>
     </message>
     <message>
-        <location filename="abstractviewer.cpp" line="361"/>
+        <location filename="abstractviewer.cpp" line="374"/>
         <source>Printing aborted.</source>
         <translation>打印已中止。</translation>
     </message>
     <message>
-        <location filename="abstractviewer.cpp" line="364"/>
+        <location filename="abstractviewer.cpp" line="377"/>
         <source>Printing active.</source>
         <translation>正在打印。</translation>
     </message>
     <message>
-        <location filename="abstractviewer.cpp" line="367"/>
+        <location filename="abstractviewer.cpp" line="380"/>
         <source>Printing completed.</source>
         <translation>打印完成。</translation>
     </message>
     <message>
-        <location filename="abstractviewer.cpp" line="370"/>
+        <location filename="abstractviewer.cpp" line="383"/>
         <source>Printing error.</source>
         <translation>打印出错。</translation>
     </message>
     <message>
-        <location filename="abstractviewer.cpp" line="375"/>
+        <location filename="abstractviewer.cpp" line="388"/>
         <source>Printing not supported!</source>
         <translation>不支持打印！</translation>
     </message>
@@ -327,22 +327,22 @@ Other mime types will be displayed with %1.</source>
 <context>
     <name>main</name>
     <message>
-        <location filename="main.cpp" line="29"/>
+        <location filename="main.cpp" line="34"/>
         <source>A viewer for JSON, PDF and text files</source>
         <translation>JSON、PDF 和文本文件查看器</translation>
     </message>
     <message>
-        <location filename="main.cpp" line="32"/>
+        <location filename="main.cpp" line="37"/>
         <source>JSON, PDF or text file to open</source>
         <translation>要打开的 JSON、PDF 或文本文件</translation>
     </message>
     <message>
-        <location filename="main.cpp" line="44"/>
+        <location filename="main.cpp" line="49"/>
         <source>No viewer plugins found</source>
         <translation>未找到查看器插件</translation>
     </message>
     <message>
-        <location filename="main.cpp" line="45"/>
+        <location filename="main.cpp" line="50"/>
         <source>Unable to load viewer plugins. Exiting application.</source>
         <translation>无法加载查看器插件，应用程序即将退出。</translation>
     </message>
