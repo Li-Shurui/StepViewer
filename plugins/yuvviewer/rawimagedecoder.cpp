@@ -904,6 +904,20 @@ protected:
     int conversionCode() const override { return cv::COLOR_BGR5652RGBA; }
 };
 
+class Rgb555Decoder final : public PackedRgbDecoder
+{
+public:
+    QLatin1StringView id() const override { return "rgb555"_L1; }
+    QString displayName() const override { return QStringLiteral("RGB555"); }
+    QString mimeType() const override { return "video/x-raw-rgb555"_L1; }
+    QStringList fileExtensions() const override { return {"rgb555"_L1, "RGB555"_L1}; }
+
+protected:
+    // Little-endian 16-bit R:G:B 5:5:5 samples match QImage::Format_RGB555.
+    int bytesPerPixel() const override { return 2; }
+    QImage::Format imageFormat() const override { return QImage::Format_RGB555; }
+};
+
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
@@ -986,6 +1000,7 @@ const QList<const RawImageDecoder *> &all()
         new Bgrx8888Decoder,
         new Rgb565Decoder,
         new Bgr565Decoder,
+        new Rgb555Decoder,
         new Y8Decoder,
     };
     return decoders;
