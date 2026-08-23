@@ -298,6 +298,18 @@ protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_I420; }
 };
 
+class Yv12Decoder final : public PlanarYuv420Decoder
+{
+public:
+    QLatin1StringView id() const override { return "yv12"_L1; }
+    QString displayName() const override { return QStringLiteral("YV12"); }
+    QString mimeType() const override { return "video/x-raw-yv12"_L1; }
+    QStringList fileExtensions() const override { return {"yv12"_L1, "YV12"_L1}; }
+
+protected:
+    int conversionCode() const override { return cv::COLOR_YUV2RGBA_YV12; }
+};
+
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
@@ -362,6 +374,7 @@ const QList<const RawImageDecoder *> &all()
         new Nv12Decoder,
         new Nv21Decoder,
         new I420Decoder,
+        new Yv12Decoder,
         new Y8Decoder,
     };
     return decoders;
