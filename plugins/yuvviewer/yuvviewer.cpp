@@ -127,6 +127,24 @@ qint64 frameCount(const RawImageDecoder &decoder, const RawImageLayout &layout,
         return 0;
     return fileSize / frameSize;
 }
+
+// Renders the composite image (plane < 0) or a single component plane.
+RawImageDecoder::ImageResult renderImage(const RawImageDecoder *decoder,
+                                         const QByteArray &data,
+                                         const RawImageLayout &layout, int plane)
+{
+    if (plane < 0)
+        return decoder->convertToImage(data, layout);
+    return decoder->extractPlane(data, layout, plane);
+}
+
+// One loaded frame: the raw samples plus the rendered view of them.
+struct LoadedFrame
+{
+    QByteArray data;
+    QImage image;
+};
+using LoadResult = std::expected<LoadedFrame, QString>;
 }
 
 YuvViewer::YuvViewer()
@@ -227,12 +245,19 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
     connect(m_frameSpinBox, &QSpinBox::valueChanged, this, &YuvViewer::reload);
     m_frameCountLabel = new QLabel(toolBar);
 
+    m_planeLabel = new QLabel(toolBar);
+    m_planeComboBox = new QComboBox(toolBar);
+    updatePlaneCombo();
+    connect(m_planeComboBox, &QComboBox::activated, this, &YuvViewer::onPlaneChanged);
+
     toolBar->addWidget(m_widthLabel);
     toolBar->addWidget(m_widthSpinBox);
     toolBar->addWidget(m_heightLabel);
     toolBar->addWidget(m_heightSpinBox);
     toolBar->addWidget(m_formatLabel);
     toolBar->addWidget(m_formatComboBox);
+    toolBar->addWidget(m_planeLabel);
+    toolBar->addWidget(m_planeComboBox);
     toolBar->addWidget(m_frameLabel);
     toolBar->addWidget(m_frameSpinBox);
     toolBar->addWidget(m_frameCountLabel);
@@ -301,6 +326,7 @@ QByteArray YuvViewer::saveState() const
     stream << m_heightSpinBox->value();
     stream << (m_decoder ? QString(m_decoder->id()) : QString());
     stream << (m_frameSpinBox ? m_frameSpinBox->value() : 1);
+    stream << (m_planeComboBox ? m_planeComboBox->currentIndex() : 0);
     return state;
 }
 
@@ -340,14 +366,26 @@ bool YuvViewer::restoreState(QByteArray &state)
         m_frameSpinBox->setValue(qMax(1, frame));
     }
 
+    // States saved before plane-view support end after the frame number.
+    updatePlaneCombo();  // rebuild for the restored decoder
+    int plane = 0;
+    if (!stream.atEnd())
+        stream >> plane;
+    if (m_planeComboBox && plane > 0 && plane < m_planeComboBox->count()) {
+        const QSignalBlocker blocker(m_planeComboBox);
+        m_planeComboBox->setCurrentIndex(plane);
+    } else {
+        plane = 0;
+    }
+
     if (!m_hasFileLayout && m_metadataError.isEmpty()
         && m_widthSpinBox && m_heightSpinBox) {
         m_widthSpinBox->setValue(width);
         m_heightSpinBox->setValue(height);
         reload();
-    } else if (m_hasFileLayout && frame > 1) {
+    } else if (m_hasFileLayout && (frame > 1 || plane > 0)) {
         // The initial reload in setupYuvUi() ran before the state was
-        // restored; reload again at the restored frame.
+        // restored; reload again with the restored frame and plane.
         reload();
     }
     return true;
@@ -412,13 +450,13 @@ void YuvViewer::reload()
     const qint64 frames = frameCount(*decoder, loadLayout, QFileInfo(fileName).size());
     updateFrameUi(frames);
     const qint64 frameIndex = frames > 0 ? qMin<qint64>(m_frameSpinBox->value() - 1, frames - 1) : 0;
+    const int plane = currentPlane();
 
     m_imageLabel->setText(tr("Loading..."));
     m_imageLabel->setWordWrap(true);
 
-    startAsyncTaskWithProgress<RawImageDecoder::ImageResult>(
-        [fileName, loadLayout, decoder, frameIndex](QPromise<RawImageDecoder::ImageResult> &promise) {
-            using ImageResult = RawImageDecoder::ImageResult;
+    startAsyncTaskWithProgress<LoadResult>(
+        [fileName, loadLayout, decoder, frameIndex, plane](QPromise<LoadResult> &promise) {
             promise.setProgressRange(0, 100);
             auto data = decoder->readData(fileName, loadLayout, frameIndex,
                                           [&promise](qint64 done, qint64 total) {
@@ -426,20 +464,29 @@ void YuvViewer::reload()
                 return !promise.isCanceled();
             });
             if (!data) {
-                promise.addResult(ImageResult(std::unexpected(data.error())));
+                promise.addResult(LoadResult(std::unexpected(data.error())));
                 return;
             }
-            promise.addResult(decoder->convertToImage(*data, loadLayout));
+            auto image = renderImage(decoder, *data, loadLayout, plane);
+            if (!image) {
+                promise.addResult(LoadResult(std::unexpected(image.error())));
+                return;
+            }
+            promise.addResult(LoadedFrame{std::move(*data), std::move(*image)});
         },
         [this](int value) {
             statusMessage(tr("Loading... %1%").arg(value), tr("open"), 0);
         },
-        [this, fileName, loadLayout, formatName, decoder, frameIndex](RawImageDecoder::ImageResult result) {
+        [this, fileName, loadLayout, formatName, decoder, frameIndex](LoadResult result) {
             if (!result) {
                 reportError(result.error());
                 return;
             }
-            displayImage(*result);
+            // Keep the raw samples: plane switching, the pixel probe and
+            // the histogram reuse them without re-reading the file.
+            m_rawData = std::move(result->data);
+            m_layout = loadLayout;
+            displayImage(result->image);
             updateInfoTab(fileName, loadLayout, decoder);
             const QString fileDescription = tr("\"%1\", %2x%3, %4 (stride=%5, scanline=%6)")
                                                 .arg(QDir::toNativeSeparators(fileName))
@@ -496,10 +543,54 @@ void YuvViewer::onFormatChanged()
     const int index = m_formatComboBox ? m_formatComboBox->currentIndex() : -1;
     if (index >= 0)
         m_decoder = RawImageDecoders::all().at(index);
+    updatePlaneCombo();
 
     // Without a known layout the viewer still waits for width/height input.
     if (m_hasFileLayout || hasContent())
         reload();
+}
+
+void YuvViewer::updatePlaneCombo()
+{
+    if (!m_planeComboBox)
+        return;
+
+    const QSignalBlocker blocker(m_planeComboBox);
+    m_planeComboBox->clear();
+    m_planeComboBox->addItem(tr("Composite"));
+    if (m_decoder)
+        m_planeComboBox->addItems(m_decoder->planeNames());
+    // Composite plus a single plane (e.g. Y8) offers nothing to switch.
+    m_planeComboBox->setEnabled(m_planeComboBox->count() > 2);
+}
+
+int YuvViewer::currentPlane() const
+{
+    // Combo index 0 is the composite view; planes are 0-based after it.
+    return m_planeComboBox ? m_planeComboBox->currentIndex() - 1 : -1;
+}
+
+void YuvViewer::onPlaneChanged()
+{
+    if (!m_decoder || m_rawData.isEmpty())
+        return;  // nothing loaded yet; the next reload applies the selection
+
+    const RawImageDecoder *decoder = m_decoder;
+    const QByteArray data = m_rawData;  // implicitly shared: cheap capture
+    const RawImageLayout layout = m_layout;
+    const int plane = currentPlane();
+
+    startAsyncTask(
+        [decoder, data, layout, plane]() {
+            return renderImage(decoder, data, layout, plane);
+        },
+        [this](RawImageDecoder::ImageResult result) {
+            if (!result) {
+                reportError(result.error());
+                return;
+            }
+            displayImage(*result);
+        });
 }
 
 void YuvViewer::clear()
@@ -515,6 +606,8 @@ void YuvViewer::clear()
     if (m_infoTable)
         m_infoTable->setRowCount(0);
 
+    m_rawData.clear();
+    m_layout = {};
     m_imageSize = {};
     m_maxScaleFactor = m_minScaleFactor = m_initialScaleFactor = m_scaleFactor = 1;
     m_zoomInAction->setEnabled(false);
@@ -640,6 +733,9 @@ void YuvViewer::retranslate()
     m_heightLabel->setText(tr("Height:"));
     m_formatLabel->setText(tr("Format:"));
     m_frameLabel->setText(tr("Frame:"));
+    m_planeLabel->setText(tr("Plane:"));
+    if (m_planeComboBox && m_planeComboBox->count() > 0)
+        m_planeComboBox->setItemText(0, tr("Composite"));
     m_widthSpinBox->setSuffix(tr(" px"));
     m_heightSpinBox->setSuffix(tr(" px"));
     m_reloadAction->setText(tr("&Reload"));
