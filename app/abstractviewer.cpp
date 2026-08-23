@@ -264,6 +264,11 @@ void AbstractViewer::disablePrinting()
     maybeSetPrintingEnabled(false);
 }
 
+bool AbstractViewer::supportsExtensionlessFiles() const
+{
+    return false;
+}
+
 bool AbstractViewer::isDefaultViewer() const
 {
     return false;

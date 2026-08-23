@@ -39,6 +39,7 @@ public:
     QByteArray saveState() const override;
     bool restoreState(QByteArray &state) override;
     bool supportsOverview() const override { return true; }
+    bool supportsExtensionlessFiles() const override { return true; }
     void cleanup() override;
 
 private slots:
