@@ -10,9 +10,11 @@
 #include <QString>
 
 class QAction;
+class QComboBox;
 class QImage;
 class QLabel;
 class QSpinBox;
+class RawImageDecoder;
 
 class YuvViewer : public ViewerInterface
 {
@@ -39,6 +41,7 @@ public:
 private slots:
     void setupYuvUi();
     void reload();
+    void onFormatChanged();
     void zoomIn();
     void zoomOut();
     void resetZoom();
@@ -56,12 +59,14 @@ private:
     QLabel *m_widthLabel = nullptr;
     QLabel *m_heightLabel = nullptr;
     QLabel *m_formatLabel = nullptr;
+    QComboBox *m_formatComboBox = nullptr;
     QSpinBox *m_widthSpinBox = nullptr;
     QSpinBox *m_heightSpinBox = nullptr;
     QAction *m_reloadAction = nullptr;
     QAction *m_zoomInAction = nullptr;
     QAction *m_zoomOutAction = nullptr;
     QAction *m_resetZoomAction = nullptr;
+    const RawImageDecoder *m_decoder = nullptr;
     bool m_hasFileLayout = false;
     int m_fileWidth = 0;
     int m_fileHeight = 0;
