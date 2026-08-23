@@ -21,6 +21,10 @@ target_link_libraries(abstractviewer PRIVATE
     Qt6::Widgets
 )
 
+# PUBLIC: plugins instantiate the startAsyncTask() template, which needs the
+# QtConcurrent headers and library.
+target_link_libraries(abstractviewer PUBLIC Qt6::Concurrent)
+
 if(TARGET Qt6::PrintSupport)
     target_link_libraries(abstractviewer PUBLIC Qt6::PrintSupport)
     target_compile_definitions(abstractviewer PUBLIC

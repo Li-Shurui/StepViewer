@@ -43,7 +43,55 @@ void AbstractViewer::init(QFile *file, QWidget *widget, QMainWindow *mainWindow)
 
 AbstractViewer::~AbstractViewer()
 {
+    // Async tasks may be executing code of a plugin library. Cancel them and
+    // wait for completion before the viewer (and potentially the plugin) is
+    // destroyed, so no worker thread outlives the code it runs.
+    cancelAsyncTasks();
+    waitForAsyncTasks();
     AbstractViewer::cleanup();
+}
+
+void AbstractViewer::cancelAsyncTasks()
+{
+    ++m_taskGeneration;
+    for (QFutureWatcherBase *watcher : std::as_const(m_asyncWatchers))
+        watcher->cancel();
+}
+
+void AbstractViewer::waitForAsyncTasks()
+{
+    const QList<QFutureWatcherBase *> watchers = std::exchange(m_asyncWatchers, {});
+    for (QFutureWatcherBase *watcher : watchers) {
+        watcher->disconnect(this);
+        watcher->waitForFinished();
+        delete watcher;
+    }
+    if (m_busyTasks > 0) {
+        m_busyTasks = 0;
+        busyChanged(false);
+    }
+}
+
+void AbstractViewer::asyncTaskStarted()
+{
+    if (++m_busyTasks == 1)
+        busyChanged(true);
+}
+
+void AbstractViewer::asyncTaskFinished()
+{
+    if (--m_busyTasks == 0)
+        busyChanged(false);
+}
+
+void AbstractViewer::busyChanged(bool busy)
+{
+#if QT_CONFIG(cursor)
+    if (busy)
+        QGuiApplication::setOverrideCursor(Qt::BusyCursor);
+    else
+        QGuiApplication::restoreOverrideCursor();
+#endif
 }
 
 void AbstractViewer::setTranslationBaseName(const QString &baseName)

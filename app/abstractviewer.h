@@ -8,6 +8,7 @@
 
 #include <QAction>
 #include <QFile>
+#include <QFutureWatcher>
 #include <QLocale>
 #include <QMainWindow>
 #include <QMenu>
@@ -19,6 +20,11 @@
 #include <QTabWidget>
 #include <QToolBar>
 #include <QtCompilerDetection>
+#include <QtConcurrentRun>
+
+#include <functional>
+#include <type_traits>
+#include <utility>
 
 class Translator;
 
@@ -89,6 +95,26 @@ protected:
     QStatusBar *statusBar() const;
     QMenuBar *menuBar() const;
 
+    // Runs work on a thread-pool thread and invokes done with its result on
+    // the UI thread. Results of tasks superseded by a newer task (or canceled
+    // via cancelAsyncTasks()) are discarded. work must not touch UI objects
+    // or members of this viewer: capture everything it needs by value, and
+    // report errors through the result type (e.g. std::expected), not via
+    // exceptions.
+    template <typename Work, typename Done>
+    void startAsyncTask(Work &&work, Done &&done);
+
+    // Invalidates the results of all pending tasks and requests their
+    // cancellation. Cancellation is cooperative: tasks poll
+    // QPromise::isCanceled() to actually stop early.
+    void cancelAsyncTasks();
+
+    // Called on the UI thread when the number of running async tasks changes
+    // between zero and non-zero. The base implementation toggles a busy
+    // cursor; reimplementations that toggle viewer UI must call it.
+    virtual void busyChanged(bool busy);
+    bool isBusy() const { return m_busyTasks > 0; }
+
     std::unique_ptr<QFile> m_file;
     QList<QAction *> m_actions;
     QWidget *m_widget = nullptr;
@@ -100,11 +126,46 @@ protected slots:
     void disablePrinting();
 
 private:
+    void asyncTaskStarted();
+    void asyncTaskFinished();
+    void waitForAsyncTasks();
+
     QList<QMenu *> m_menus;
     QList<QToolBar *> m_toolBars;
+    QList<QFutureWatcherBase *> m_asyncWatchers;
+    quint64 m_taskGeneration = 0;
+    int m_busyTasks = 0;
     bool m_printingEnabled = false;
     QLocale m_currentLocale;
     std::unique_ptr<Translator> m_translator;
 };
+
+template <typename Work, typename Done>
+void AbstractViewer::startAsyncTask(Work &&work, Done &&done)
+{
+    using Result = std::invoke_result_t<std::decay_t<Work>>;
+
+    auto *watcher = new QFutureWatcher<Result>(this);
+    const quint64 generation = ++m_taskGeneration;
+    m_asyncWatchers.append(watcher);
+    asyncTaskStarted();
+
+    // Keep our own future reference: QFutureWatcher does not expose a typed
+    // takeResult(), and results of move-only types must be moved out.
+    const QFuture<Result> future = QtConcurrent::run(std::forward<Work>(work));
+
+    connect(watcher, &QFutureWatcherBase::finished, this,
+            [this, watcher, generation, future,
+             done = std::forward<Done>(done)]() mutable {
+                m_asyncWatchers.removeAll(watcher);
+                asyncTaskFinished();
+                watcher->deleteLater();
+                if (generation != m_taskGeneration)
+                    return;  // superseded or canceled: discard the result
+                done(future.takeResult());
+            });
+
+    watcher->setFuture(future);
+}
 
 #endif // ABSTRACTVIEWER_H
