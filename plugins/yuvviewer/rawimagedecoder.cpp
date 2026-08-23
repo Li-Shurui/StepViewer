@@ -414,6 +414,101 @@ protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_YVYU; }
 };
 
+// Shared implementation for three-plane (planar) YUV 4:2:2 formats:
+// a full-resolution Y plane followed by the horizontally subsampled
+// U and V planes, each with half the stride and all lines of the Y
+// plane. Only the chroma plane order (U,V vs V,U) differs between them.
+class PlanarYuv422Decoder : public RawImageDecoder
+{
+public:
+    LayoutResult validateLayout(const RawImageLayout &layout) const override
+    {
+        const LayoutResult baseResult = RawImageDecoder::validateLayout(layout);
+        if (!baseResult)
+            return baseResult;
+
+        if ((layout.width % 2) != 0) {
+            return std::unexpected(tr("%1 width must be even. Received %2.")
+                                       .arg(displayName())
+                                       .arg(layout.width));
+        }
+        if (layout.stride < layout.width || (layout.stride % 2) != 0) {
+            return std::unexpected(tr("%1 stride must be even and at least the width. "
+                                      "Received width %2, stride %3.")
+                                       .arg(displayName())
+                                       .arg(layout.width)
+                                       .arg(layout.stride));
+        }
+        if (layout.scanline < layout.height) {
+            return std::unexpected(tr("%1 scanline must be at least the height. "
+                                      "Received height %2, scanline %3.")
+                                       .arg(displayName())
+                                       .arg(layout.height)
+                                       .arg(layout.scanline));
+        }
+
+        return layout;
+    }
+
+    qint64 expectedByteSize(const RawImageLayout &layout) const override
+    {
+        return qint64(layout.stride) * qint64(layout.scanline) * 2;
+    }
+
+    ImageResult convertToImage(const QByteArray &data,
+                               const RawImageLayout &layout) const override
+    {
+        return runConversion(*this, [&]() -> ImageResult {
+            const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+            const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+            const qint64 chromaPlaneBytes = qint64(layout.stride / 2) * layout.scanline;
+            const uchar *uPlane = pixels + yPlaneBytes
+                                  + (chromaOrderIsUV() ? 0 : chromaPlaneBytes);
+            const uchar *vPlane = pixels + yPlaneBytes
+                                  + (chromaOrderIsUV() ? chromaPlaneBytes : 0);
+
+            // Repack into a YUY2 macropixel stream for OpenCV.
+            QByteArray yuy2(qint64(layout.width) * layout.height * 2, Qt::Uninitialized);
+            auto *dst = reinterpret_cast<uchar *>(yuy2.data());
+            const int pairsPerRow = layout.width / 2;
+            for (int row = 0; row < layout.height; ++row) {
+                const uchar *yRow = pixels + qint64(row) * layout.stride;
+                const uchar *uRow = uPlane + qint64(row) * (layout.stride / 2);
+                const uchar *vRow = vPlane + qint64(row) * (layout.stride / 2);
+                uchar *out = dst + qint64(row) * layout.width * 2;
+                for (int pair = 0; pair < pairsPerRow; ++pair) {
+                    out[4 * pair]     = yRow[2 * pair];
+                    out[4 * pair + 1] = uRow[pair];
+                    out[4 * pair + 2] = yRow[2 * pair + 1];
+                    out[4 * pair + 3] = vRow[pair];
+                }
+            }
+
+            cv::Mat yuv(layout.height, layout.width, CV_8UC2, yuy2.data(),
+                        static_cast<size_t>(layout.width) * 2);
+            cv::Mat rgba;
+            cv::cvtColor(yuv, rgba, cv::COLOR_YUV2RGBA_YUY2);
+            return rgbaMatToImage(rgba, layout);
+        });
+    }
+
+protected:
+    // I422 stores Y,U,V planes; YV16 stores Y,V,U.
+    virtual bool chromaOrderIsUV() const = 0;
+};
+
+class I422Decoder final : public PlanarYuv422Decoder
+{
+public:
+    QLatin1StringView id() const override { return "i422"_L1; }
+    QString displayName() const override { return QStringLiteral("I422"); }
+    QString mimeType() const override { return "video/x-raw-i422"_L1; }
+    QStringList fileExtensions() const override { return {"i422"_L1, "I422"_L1}; }
+
+protected:
+    bool chromaOrderIsUV() const override { return true; }
+};
+
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
@@ -482,6 +577,7 @@ const QList<const RawImageDecoder *> &all()
         new Yuy2Decoder,
         new UyvyDecoder,
         new YvyuDecoder,
+        new I422Decoder,
         new Y8Decoder,
     };
     return decoders;
