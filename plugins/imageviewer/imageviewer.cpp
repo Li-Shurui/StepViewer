@@ -10,12 +10,16 @@
 
 #include <QBuffer>
 #include <QColorSpace>
+#include <QFileInfo>
 #include <QIcon>
 #include <QImageReader>
 #include <QKeySequence>
+#include <QLocale>
 #include <QPainter>
 #include <QPixmap>
 #include <QScreen>
+#include <QTableWidget>
+#include <QTabWidget>
 
 #include <QDir>
 
@@ -114,6 +118,12 @@ void ImageViewer::retranslate()
     m_zoomInAct->setText(tr("Zoom &In"));
     m_zoomOutAct->setText(tr("Zoom &Out"));
     m_resetZoomAct->setText(tr("Reset Zoom"));
+
+    if (m_infoTable && m_uiAssets.tabs) {
+        const int index = m_uiAssets.tabs->indexOf(m_infoTable);
+        if (index >= 0)
+            m_uiAssets.tabs->setTabText(index, tr("Info"));
+    }
 }
 
 QStringList ImageViewer::supportedMimeTypes() const
@@ -124,11 +134,21 @@ QStringList ImageViewer::supportedMimeTypes() const
 void ImageViewer::clear()
 {
     m_imageLabel->setPixmap({});
+    if (m_infoTable)
+        m_infoTable->setRowCount(0);
     m_maxScaleFactor = m_minScaleFactor = m_initialScaleFactor = m_scaleFactor = 1;
+}
+
+void ImageViewer::cleanup()
+{
+    // The base class deletes the page widget; drop the dangling pointer.
+    m_infoTable = nullptr;
+    AbstractViewer::cleanup();
 }
 
 void ImageViewer::setupImageUi()
 {
+    m_infoTable = addInfoTab(tr("Info"));
     openFile();
 }
 
@@ -201,11 +221,37 @@ void ImageViewer::openFile()
             m_minScaleFactor = m_initialScaleFactor / 3;
             doSetScaleFactor(m_initialScaleFactor);
 
+            updateInfoTab(name, result->image, result->colorSpaceDescription);
             statusMessage(msgOpen(name, *result));
             maybeEnablePrinting();
         });
 }
 //! [open]
+
+void ImageViewer::updateInfoTab(const QString &name, const QImage &image,
+                                const QString &colorSpaceDescription)
+{
+    if (!m_infoTable)
+        return;
+
+    const QLocale locale;
+    int row = 0;
+    const auto addRow = [this, &row](const QString &property, const QString &value) {
+        m_infoTable->insertRow(row);
+        m_infoTable->setItem(row, 0, new QTableWidgetItem(property));
+        m_infoTable->setItem(row, 1, new QTableWidgetItem(value));
+        ++row;
+    };
+
+    m_infoTable->setRowCount(0);
+    addRow(tr("File"), QDir::toNativeSeparators(name));
+    addRow(tr("File size"), locale.formattedDataSize(QFileInfo(name).size()));
+    addRow(tr("Width"), tr("%1 px").arg(image.width()));
+    addRow(tr("Height"), tr("%1 px").arg(image.height()));
+    addRow(tr("Depth"), tr("%1 bits").arg(image.depth()));
+    addRow(tr("Color space"), !colorSpaceDescription.isEmpty()
+           ? colorSpaceDescription : tr("unknown"));
+}
 
 void ImageViewer::setScaleFactor(qreal scaleFactor)
 {

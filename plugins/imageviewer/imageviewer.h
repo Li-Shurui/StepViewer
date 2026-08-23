@@ -9,6 +9,9 @@
 #include <QLabel>
 #include <QSizeF>
 
+class QImage;
+class QTableWidget;
+
 class ImageViewer : public ViewerInterface
 {
     Q_OBJECT
@@ -26,7 +29,8 @@ public:
     bool hasContent() const override;
     QByteArray saveState() const override { return {}; }
     bool restoreState(QByteArray &) override { return true; }
-    bool supportsOverview() const override { return false; }
+    bool supportsOverview() const override { return true; }
+    void cleanup() override;
 
 #ifdef DOCUMENTVIEWER_PRINTSUPPORT
 protected:
@@ -43,11 +47,14 @@ private slots:
 private:
     void retranslate() override;
     void openFile();
+    void updateInfoTab(const QString &name, const QImage &image,
+                       const QString &colorSpaceDescription);
     void setScaleFactor(qreal scaleFactor);
     void doSetScaleFactor(qreal scaleFactor);
     void enableZoomActions();
 
     QLabel *m_imageLabel{};
+    QTableWidget *m_infoTable{};
     QAction *m_zoomInAct{};
     QAction *m_zoomOutAct{};
     QAction *m_resetZoomAct{};
