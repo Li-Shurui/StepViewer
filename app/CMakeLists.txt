@@ -25,6 +25,9 @@ target_link_libraries(abstractviewer PRIVATE
 # QtConcurrent headers and library.
 target_link_libraries(abstractviewer PUBLIC Qt6::Concurrent)
 
+# PUBLIC: abstractviewer.h uses std::expected, so consumers need C++23 too.
+target_compile_features(abstractviewer PUBLIC cxx_std_23)
+
 if(TARGET Qt6::PrintSupport)
     target_link_libraries(abstractviewer PUBLIC Qt6::PrintSupport)
     target_compile_definitions(abstractviewer PUBLIC

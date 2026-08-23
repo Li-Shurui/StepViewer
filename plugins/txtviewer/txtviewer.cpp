@@ -122,17 +122,27 @@ void TxtViewer::openFile()
         disablePrinting();
     }
 
-    // Read the file on a worker thread; the worker opens its own QFile
-    // because QFile objects must not be shared across threads.
-    startAsyncTask(
-        [fileName]() -> std::expected<QString, QString> {
-            QFile file(fileName);
-            if (!file.open(QFile::ReadOnly | QFile::Text))
-                return std::unexpected(file.errorString());
-            QTextStream in(&file);
-            return in.readAll();
+    // Read the file on a worker thread with progress reporting; the worker
+    // opens its own QFile because QFile objects must not cross threads.
+    using TextResult = std::expected<QString, QString>;
+    startAsyncTaskWithProgress<TextResult>(
+        [fileName](QPromise<TextResult> &promise) {
+            promise.setProgressRange(0, 100);
+            auto bytes = readFileChunked(fileName, [&promise](qint64 done, qint64 total) {
+                promise.setProgressValue(total > 0 ? int(done * 100 / total) : 0);
+                return !promise.isCanceled();
+            });
+            if (!bytes) {
+                promise.addResult(TextResult(std::unexpected(bytes.error())));
+                return;
+            }
+            QTextStream in(*bytes, QIODevice::ReadOnly);
+            promise.addResult(in.readAll());
         },
-        [this, fileName, type](std::expected<QString, QString> result) {
+        [this](int value) {
+            statusMessage(tr("Loading... %1%").arg(value), tr("open"), 0);
+        },
+        [this, fileName, type](TextResult result) {
             if (!result) {
                 statusMessage(tr("Cannot read file %1:\n%2.")
                               .arg(QDir::toNativeSeparators(fileName), result.error()), type);

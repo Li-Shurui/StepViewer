@@ -179,22 +179,34 @@ void JsonViewer::openJsonFile()
 
     const QString fileName = m_file->fileName();
 
-    // Reading, parsing and tree building all run on a worker thread; the
-    // completion callback installs the pre-built tree into the model.
-    startAsyncTask(
-        [fileName]() -> std::expected<JsonContent, QString> {
-            QFile file(fileName);
-            if (!file.open(QIODevice::ReadOnly))
-                return std::unexpected(file.errorString());
+    // Reading (with progress), parsing and tree building all run on a worker
+    // thread; the completion callback installs the pre-built tree.
+    using JsonResult = std::expected<JsonContent, QString>;
+    startAsyncTaskWithProgress<JsonResult>(
+        [fileName](QPromise<JsonResult> &promise) {
+            promise.setProgressRange(0, 100);
+            auto bytes = readFileChunked(fileName, [&promise](qint64 done, qint64 total) {
+                promise.setProgressValue(total > 0 ? int(done * 100 / total) : 0);
+                return !promise.isCanceled();
+            });
+            if (!bytes) {
+                promise.addResult(JsonResult(std::unexpected(bytes.error())));
+                return;
+            }
 
             QJsonParseError err;
-            QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &err);
-            if (err.error != QJsonParseError::NoError)
-                return std::unexpected(err.errorString());
+            QJsonDocument doc = QJsonDocument::fromJson(*bytes, &err);
+            if (err.error != QJsonParseError::NoError) {
+                promise.addResult(JsonResult(std::unexpected(err.errorString())));
+                return;
+            }
 
-            return JsonContent{doc, buildTree(doc)};
+            promise.addResult(JsonResult(JsonContent{doc, buildTree(doc)}));
         },
-        [this, fileName](std::expected<JsonContent, QString> result) {
+        [this](int value) {
+            statusMessage(tr("Loading... %1%").arg(value), tr("open"), 0);
+        },
+        [this, fileName](JsonResult result) {
             const QString type = tr("open");
             if (!result) {
                 statusMessage(tr("Unable to load Json document from %1. %2")

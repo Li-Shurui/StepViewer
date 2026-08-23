@@ -27,7 +27,8 @@ RawImageDecoder::LayoutResult RawImageDecoder::validateLayout(const RawImageLayo
 }
 
 RawImageDecoder::DataResult RawImageDecoder::readData(const QString &fileName,
-                                                      const RawImageLayout &layout) const
+                                                      const RawImageLayout &layout,
+                                                      const ProgressCallback &progress) const
 {
     QFile file(fileName);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -51,16 +52,28 @@ RawImageDecoder::DataResult RawImageDecoder::readData(const QString &fileName,
                 .arg(layout.scanline));
     }
 
-    QByteArray data = file.readAll();
-    if (file.error() != QFileDevice::NoError) {
-        return std::unexpected(tr("Failed while reading the file: %1")
-                                   .arg(file.errorString()));
+    constexpr qint64 chunkSize = 4 * 1024 * 1024;
+    QByteArray data(expectedSize, Qt::Uninitialized);
+    qint64 offset = 0;
+    while (offset < expectedSize) {
+        const qint64 bytesRead = file.read(data.data() + offset,
+                                           qMin(chunkSize, expectedSize - offset));
+        if (bytesRead < 0) {
+            return std::unexpected(tr("Failed while reading the file: %1")
+                                       .arg(file.errorString()));
+        }
+        if (bytesRead == 0)
+            break;  // the file shrank mid-read; reported below
+        offset += bytesRead;
+        if (progress && !progress(offset, expectedSize))
+            return std::unexpected(tr("Loading canceled."));
     }
-    if (data.size() != expectedSize) {
+
+    if (offset != expectedSize) {
         return std::unexpected(tr("The file read was incomplete. "
                                   "Expected %1 bytes, received %2 bytes.")
                                    .arg(expectedSize)
-                                   .arg(data.size()));
+                                   .arg(offset));
     }
 
     return data;

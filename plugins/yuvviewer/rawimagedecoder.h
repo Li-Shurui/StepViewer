@@ -12,6 +12,7 @@
 #include <QStringList>
 
 #include <expected>
+#include <functional>
 
 // Generic layout description for raw (uncompressed) image buffers.
 // stride/scanline describe the first plane; planar formats may interpret
@@ -56,7 +57,15 @@ public:
                                        const RawImageLayout &layout) const = 0;
 
     // Shared file loading, size-checked against expectedByteSize().
-    DataResult readData(const QString &fileName, const RawImageLayout &layout) const;
+    // The progress variant reports bytesRead/totalBytes after each chunk;
+    // the callback returns false to abort the read (cooperative cancel).
+    using ProgressCallback = std::function<bool(qint64 bytesRead, qint64 totalBytes)>;
+    DataResult readData(const QString &fileName, const RawImageLayout &layout) const
+    {
+        return readData(fileName, layout, {});
+    }
+    DataResult readData(const QString &fileName, const RawImageLayout &layout,
+                        const ProgressCallback &progress) const;
 };
 
 namespace RawImageDecoders {
