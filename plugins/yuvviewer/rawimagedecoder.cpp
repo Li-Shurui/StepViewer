@@ -596,6 +596,18 @@ protected:
     bool chromaOrderIsUV() const override { return true; }
 };
 
+class Nv61Decoder final : public SemiPlanarYuv422Decoder
+{
+public:
+    QLatin1StringView id() const override { return "nv61"_L1; }
+    QString displayName() const override { return QStringLiteral("NV61"); }
+    QString mimeType() const override { return "video/x-raw-nv61"_L1; }
+    QStringList fileExtensions() const override { return {"nv61"_L1, "NV61"_L1}; }
+
+protected:
+    bool chromaOrderIsUV() const override { return false; }
+};
+
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
@@ -667,6 +679,7 @@ const QList<const RawImageDecoder *> &all()
         new I422Decoder,
         new Yv16Decoder,
         new Nv16Decoder,
+        new Nv61Decoder,
         new Y8Decoder,
     };
     return decoders;
