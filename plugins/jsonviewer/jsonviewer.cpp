@@ -29,7 +29,39 @@
 #include <QPainter>
 #endif
 
+#include <expected>
+#include <memory>
+
 using namespace Qt::StringLiterals;
+
+namespace {
+
+// Builds the item tree without any QObject involvement, so it can run on a
+// worker thread. Ownership stays with the caller via unique_ptr, which also
+// guarantees cleanup when a stale async result is discarded.
+std::unique_ptr<JsonTreeItem> buildTree(const QJsonDocument &doc)
+{
+    if (doc.isNull())
+        return nullptr;
+
+    std::unique_ptr<JsonTreeItem> root;
+    if (doc.isArray()) {
+        root.reset(JsonTreeItem::load(QJsonValue(doc.array())));
+        root->setType(QJsonValue::Array);
+    } else {
+        root.reset(JsonTreeItem::load(QJsonValue(doc.object())));
+        root->setType(QJsonValue::Object);
+    }
+    return root;
+}
+
+struct JsonContent
+{
+    QJsonDocument doc;
+    std::unique_ptr<JsonTreeItem> tree;
+};
+
+}
 
 //! [pluginCpp]
 JsonViewer::JsonViewer()
@@ -75,33 +107,8 @@ void JsonViewer::setupJsonUi()
     jsonMenu->addAction(m_collapseAllAction);
     jsonToolBar->addAction(m_collapseAllAction);
 
-    openJsonFile();
-
-    if (m_root.isEmpty())
-        return;
-
-    // Populate bookmarks with toplevel
-    m_uiAssets.tabs->clear();
-    m_toplevel = new QListWidget(m_uiAssets.tabs);
-    m_uiAssets.tabs->addTab(m_toplevel, {});
-    qRegisterMetaType<QModelIndex>();
-    for (int i = 0; i < m_tree->model()->rowCount(); ++i) {
-        const auto &index = m_tree->model()->index(i, 0);
-        m_toplevel->addItem(index.data().toString());
-        auto *item = m_toplevel->item(i);
-        item->setData(Qt::UserRole, index);
-    }
-    m_toplevel->setAcceptDrops(true);
-    m_tree->setDragEnabled(true);
-    m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
-    m_toplevel->setContextMenuPolicy(Qt::CustomContextMenu);
-
-    connect(m_toplevel, &QListWidget::itemClicked, this, &JsonViewer::onTopLevelItemClicked);
-    connect(m_toplevel, &QListWidget::itemDoubleClicked, this, &JsonViewer::onTopLevelItemDoubleClicked);
-    connect(m_toplevel, &QListWidget::customContextMenuRequested, this, &JsonViewer::onBookmarkMenuRequested);
-    connect(m_tree, &QTreeView::customContextMenuRequested, this, &JsonViewer::onJsonMenuRequested);
-
-    // Connect back and forward
+    // Connect back and forward. Safe without a model: navigation no-ops on
+    // invalid indexes while the document is still loading.
     connect(m_uiAssets.back, &QAction::triggered, m_tree, [&](){
         const QModelIndex &index = m_tree->indexAbove(m_tree->currentIndex());
         if (index.isValid())
@@ -126,6 +133,38 @@ void JsonViewer::setupJsonUi()
     });
 
     retranslate();
+
+    // Loads asynchronously; bookmarks are populated once loading finishes.
+    openJsonFile();
+}
+
+void JsonViewer::setupBookmarks()
+{
+    if (m_root.isEmpty())
+        return;
+
+    // Populate bookmarks with toplevel
+    m_uiAssets.tabs->clear();
+    m_toplevel = new QListWidget(m_uiAssets.tabs);
+    m_uiAssets.tabs->addTab(m_toplevel, {});
+    qRegisterMetaType<QModelIndex>();
+    for (int i = 0; i < m_tree->model()->rowCount(); ++i) {
+        const auto &index = m_tree->model()->index(i, 0);
+        m_toplevel->addItem(index.data().toString());
+        auto *item = m_toplevel->item(i);
+        item->setData(Qt::UserRole, index);
+    }
+    m_toplevel->setAcceptDrops(true);
+    m_tree->setDragEnabled(true);
+    m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_toplevel->setContextMenuPolicy(Qt::CustomContextMenu);
+
+    connect(m_toplevel, &QListWidget::itemClicked, this, &JsonViewer::onTopLevelItemClicked);
+    connect(m_toplevel, &QListWidget::itemDoubleClicked, this, &JsonViewer::onTopLevelItemDoubleClicked);
+    connect(m_toplevel, &QListWidget::customContextMenuRequested, this, &JsonViewer::onBookmarkMenuRequested);
+    connect(m_tree, &QTreeView::customContextMenuRequested, this, &JsonViewer::onJsonMenuRequested);
+
+    retranslate();
 }
 
 void resizeToContents(QTreeView *tree)
@@ -134,37 +173,43 @@ void resizeToContents(QTreeView *tree)
         tree->resizeColumnToContents(i);
 }
 
-bool JsonViewer::openJsonFile()
+void JsonViewer::openJsonFile()
 {
     disablePrinting();
 
-    QJsonParseError err;
+    const QString fileName = m_file->fileName();
 
-    const QString type = tr("open");
-    if (!m_file->open(QIODevice::ReadOnly)) {
-        statusMessage(tr("Unable to open Json document from %1. %2")
-                      .arg(QDir::toNativeSeparators(m_file->fileName()),
-                           err.errorString()),type);
-        return false;
-    }
-    m_root = QJsonDocument::fromJson(m_file->readAll(), &err);
-    if (err.error != QJsonParseError::NoError) {
-        statusMessage(tr("Unable to parse Json document from %1. %2")
-                      .arg(QDir::toNativeSeparators(m_file->fileName()),
-                           err.errorString()), type);
-        return false;
-    }
+    // Reading, parsing and tree building all run on a worker thread; the
+    // completion callback installs the pre-built tree into the model.
+    startAsyncTask(
+        [fileName]() -> std::expected<JsonContent, QString> {
+            QFile file(fileName);
+            if (!file.open(QIODevice::ReadOnly))
+                return std::unexpected(file.errorString());
 
-    statusMessage(tr("Json document %1 opened")
-                  .arg(QDir::toNativeSeparators(m_file->fileName())), type);
-    m_file->close();
+            QJsonParseError err;
+            QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &err);
+            if (err.error != QJsonParseError::NoError)
+                return std::unexpected(err.errorString());
 
-    maybeEnablePrinting();
+            return JsonContent{doc, buildTree(doc)};
+        },
+        [this, fileName](std::expected<JsonContent, QString> result) {
+            const QString type = tr("open");
+            if (!result) {
+                statusMessage(tr("Unable to load Json document from %1. %2")
+                              .arg(QDir::toNativeSeparators(fileName), result.error()), type);
+                return;
+            }
 
-    JsonItemModel *model = new JsonItemModel(m_root, this);
-    m_tree->setModel(model);
+            m_root = std::move(result->doc);
+            m_tree->setModel(new JsonItemModel(result->tree.release(), this));
 
-    return true;
+            statusMessage(tr("Json document %1 opened")
+                          .arg(QDir::toNativeSeparators(fileName)), type);
+            maybeEnablePrinting();
+            setupBookmarks();
+        });
 }
 
 QModelIndex indexOf(const QListWidgetItem *item)
@@ -438,27 +483,16 @@ JsonItemModel::JsonItemModel(QObject *parent)
 }
 
 JsonItemModel::JsonItemModel(const QJsonDocument &doc, QObject *parent)
-    : QAbstractItemModel(parent)
-    , m_rootItem{new JsonTreeItem}
+    : JsonItemModel(buildTree(doc).release(), parent)
 {
-    // Append header lines and return on empty document
+}
+
+JsonItemModel::JsonItemModel(JsonTreeItem *rootItem, QObject *parent)
+    : QAbstractItemModel(parent)
+    , m_rootItem{rootItem ? rootItem : new JsonTreeItem}
+{
     m_headers.append("Key"_L1);
     m_headers.append("Value"_L1);
-    if (doc.isNull())
-        return;
-
-    // Reset the model. Root can either be a value or an array.
-    beginResetModel();
-    delete m_rootItem;
-    if (doc.isArray()) {
-        m_rootItem = JsonTreeItem::load(QJsonValue(doc.array()));
-        m_rootItem->setType(QJsonValue::Array);
-
-    } else {
-        m_rootItem = JsonTreeItem::load(QJsonValue(doc.object()));
-        m_rootItem->setType(QJsonValue::Object);
-    }
-    endResetModel();
 }
 
 JsonItemModel::~JsonItemModel()

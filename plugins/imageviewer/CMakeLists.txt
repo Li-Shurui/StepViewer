@@ -10,6 +10,8 @@ set_target_properties(imageviewer PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/.."
 )
 
+target_compile_features(imageviewer PRIVATE cxx_std_23)
+
 target_link_libraries(imageviewer PRIVATE
     Qt6::Core
     Qt6::Gui

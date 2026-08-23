@@ -9,7 +9,6 @@
 #include <QToolBar>
 
 #include <QColorSpace>
-#include <QGuiApplication>
 #include <QIcon>
 #include <QImageReader>
 #include <QKeySequence>
@@ -18,6 +17,8 @@
 #include <QScreen>
 
 #include <QDir>
+
+#include <expected>
 
 #ifdef DOCUMENTVIEWER_PRINTSUPPORT
 #  include <QPrinter>
@@ -36,14 +37,28 @@ static QStringList imageFormats()
     return result;
 }
 
-static QString msgOpen(const QString &name, const QImage &image)
+namespace {
+
+// Result of the worker-thread image load: the sRGB-converted image plus
+// the description of the original color space for the status message.
+struct LoadedImage
 {
-    const QString description = image.colorSpace().isValid()
-    ? image.colorSpace().description() : ImageViewer::tr("unknown");
+    QImage image;
+    QString colorSpaceDescription;
+};
+
+using LoadResult = std::expected<LoadedImage, QString>;
+
+}
+
+static QString msgOpen(const QString &name, const LoadedImage &loaded)
+{
+    const QString description = !loaded.colorSpaceDescription.isEmpty()
+    ? loaded.colorSpaceDescription : ImageViewer::tr("unknown");
     return ImageViewer::tr("Opened \"%1\", %2x%3, Depth: %4 (%5)")
                            .arg(QDir::toNativeSeparators(name))
-                           .arg(image.width()).arg(image.height())
-                           .arg(image.depth()).arg(description);
+                           .arg(loaded.image.width()).arg(loaded.image.height())
+                           .arg(loaded.image.depth()).arg(description);
 }
 
 //! [init]
@@ -119,52 +134,57 @@ void ImageViewer::setupImageUi()
 //! [open]
 void ImageViewer::openFile()
 {
-#if QT_CONFIG(cursor)
-    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
-#endif
     const QString name = m_file->fileName();
-    QImageReader reader(name);
-    const QImage origImage = reader.read();
-    if (origImage.isNull()) {
-        statusMessage(tr("Cannot read file %1:\n%2.")
-                      .arg(QDir::toNativeSeparators(name),
-                           reader.errorString()), tr("open"));
-        disablePrinting();
-#if QT_CONFIG(cursor)
-        QGuiApplication::restoreOverrideCursor();
-#endif
-        return;
-    }
 
-    clear();
+    // QImageReader is not a QObject and is safe to use on a worker thread;
+    // QPixmap conversion stays on the UI thread in the completion callback.
+    startAsyncTask(
+        [name]() -> LoadResult {
+            QImageReader reader(name);
+            QImage image = reader.read();
+            if (image.isNull())
+                return std::unexpected(reader.errorString());
 
-    QImage image = origImage.colorSpace().isValid()
-        ? origImage.convertedToColorSpace(QColorSpace::SRgb)
-        : origImage;
+            LoadedImage loaded;
+            if (image.colorSpace().isValid()) {
+                loaded.colorSpaceDescription = image.colorSpace().description();
+                loaded.image = image.convertedToColorSpace(QColorSpace::SRgb);
+            } else {
+                loaded.image = std::move(image);
+            }
+            return loaded;
+        },
+        [this, name](LoadResult result) {
+            if (!result) {
+                statusMessage(tr("Cannot read file %1:\n%2.")
+                              .arg(QDir::toNativeSeparators(name), result.error()),
+                              tr("open"));
+                disablePrinting();
+                return;
+            }
 
-    const auto devicePixelRatio = m_imageLabel->devicePixelRatioF();
-    m_imageSize = QSizeF(image.size()) / devicePixelRatio;
+            clear();
 
-    QPixmap pixmap = QPixmap::fromImage(image);
-    pixmap.setDevicePixelRatio(devicePixelRatio);
-    m_imageLabel->setPixmap(pixmap);
+            const auto devicePixelRatio = m_imageLabel->devicePixelRatioF();
+            m_imageSize = QSizeF(result->image.size()) / devicePixelRatio;
 
-    const QSizeF targetSize = m_imageLabel->parentWidget()->size();
-    if (m_imageSize.width() > targetSize.width()
-        || m_imageSize.height() > targetSize.height()) {
-        m_initialScaleFactor = qMin(targetSize.width() / m_imageSize.width(),
-                                    targetSize.height() / m_imageSize.height());
-    }
-    m_maxScaleFactor = 3 * m_initialScaleFactor;
-    m_minScaleFactor = m_initialScaleFactor / 3;
-    doSetScaleFactor(m_initialScaleFactor);
+            QPixmap pixmap = QPixmap::fromImage(result->image);
+            pixmap.setDevicePixelRatio(devicePixelRatio);
+            m_imageLabel->setPixmap(pixmap);
 
-    statusMessage(msgOpen(name, origImage));
-#if QT_CONFIG(cursor)
-    QGuiApplication::restoreOverrideCursor();
-#endif
+            const QSizeF targetSize = m_imageLabel->parentWidget()->size();
+            if (m_imageSize.width() > targetSize.width()
+                || m_imageSize.height() > targetSize.height()) {
+                m_initialScaleFactor = qMin(targetSize.width() / m_imageSize.width(),
+                                            targetSize.height() / m_imageSize.height());
+            }
+            m_maxScaleFactor = 3 * m_initialScaleFactor;
+            m_minScaleFactor = m_initialScaleFactor / 3;
+            doSetScaleFactor(m_initialScaleFactor);
 
-    maybeEnablePrinting();
+            statusMessage(msgOpen(name, *result));
+            maybeEnablePrinting();
+        });
 }
 //! [open]
 
