@@ -573,7 +573,9 @@ public:
 
     qint64 expectedByteSize(const RawImageLayout &layout) const override
     {
-        return qint64(layout.stride) * qint64(layout.scanline) * 2;
+        // stride is in bytes and already accounts for both pixels of a
+        // macropixel: the frame is exactly stride * scanline bytes.
+        return qint64(layout.stride) * qint64(layout.scanline);
     }
 
     int defaultStride(int width) const override { return width * 2; }
@@ -1079,7 +1081,8 @@ public:
 
     qint64 expectedByteSize(const RawImageLayout &layout) const override
     {
-        return qint64(layout.stride) * qint64(layout.scanline) * bytesPerPixel();
+        // stride is in bytes and already includes bytesPerPixel().
+        return qint64(layout.stride) * qint64(layout.scanline);
     }
 
     int defaultStride(int width) const override { return width * bytesPerPixel(); }
