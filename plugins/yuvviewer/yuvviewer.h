@@ -86,6 +86,7 @@ private:
     QSpinBox *m_heightSpinBox = nullptr;
     QSpinBox *m_frameSpinBox = nullptr;
     QTableWidget *m_infoTable = nullptr;
+    QLabel *m_histogramLabel = nullptr;
     QAction *m_reloadAction = nullptr;
     QAction *m_prevFrameAction = nullptr;
     QAction *m_nextFrameAction = nullptr;

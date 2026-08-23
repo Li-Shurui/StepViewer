@@ -140,6 +140,10 @@ protected:
     // Only visible if supportsOverview() returns true.
     QTableWidget *addInfoTab(const QString &title);
 
+    // Adds an arbitrary page to the overview tab widget (e.g. a histogram
+    // view). Same call-timing and lifecycle rules as addInfoTab().
+    void addTabPage(QWidget *page, const QString &title);
+
     // Called on the UI thread when the number of running async tasks changes
     // between zero and non-zero. The base implementation toggles a busy
     // cursor; reimplementations that toggle viewer UI must call it.
@@ -165,6 +169,7 @@ private:
     QList<QToolBar *> m_toolBars;
     QList<QFutureWatcherBase *> m_asyncWatchers;
     QList<QTableWidget *> m_infoTabs;
+    QList<QWidget *> m_tabPages;
     quint64 m_taskGeneration = 0;
     int m_busyTasks = 0;
     bool m_printingEnabled = false;

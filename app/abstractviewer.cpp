@@ -122,6 +122,17 @@ QTableWidget *AbstractViewer::addInfoTab(const QString &title)
     return table;
 }
 
+void AbstractViewer::addTabPage(QWidget *page, const QString &title)
+{
+    QTabWidget *tabs = m_uiAssets.tabs;
+    if (!tabs || !page)
+        return;
+
+    page->setParent(tabs);
+    tabs->addTab(page, title);
+    m_tabPages.append(page);
+}
+
 std::expected<QByteArray, QString> AbstractViewer::readFileChunked(
         const QString &fileName, const ReadProgressCallback &progress)
 {
@@ -327,6 +338,8 @@ void AbstractViewer::cleanup()
     // Deleting a page widget also removes its tab from the tab widget.
     qDeleteAll(m_infoTabs);
     m_infoTabs.clear();
+    qDeleteAll(m_tabPages);
+    m_tabPages.clear();
 
     for (const auto &connection : m_connections)
         QObject::disconnect(connection);

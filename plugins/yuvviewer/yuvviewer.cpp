@@ -36,6 +36,7 @@
 #include <QToolBar>
 
 #include <climits>
+#include <array>
 #include <expected>
 #include <limits>
 #include <optional>
@@ -150,8 +151,102 @@ struct LoadedFrame
 {
     QByteArray data;
     QImage image;
+    QImage histogram;
 };
 using LoadResult = std::expected<LoadedFrame, QString>;
+
+QColor planeColor(const QString &planeName)
+{
+    if (planeName == "Y"_L1)
+        return QColor(90, 90, 90);
+    if (planeName == "U"_L1)
+        return QColor(70, 70, 220);
+    if (planeName == "V"_L1)
+        return QColor(220, 70, 70);
+    if (planeName == "R"_L1)
+        return QColor(220, 40, 40);
+    if (planeName == "G"_L1)
+        return QColor(40, 170, 40);
+    if (planeName == "B"_L1)
+        return QColor(60, 60, 230);
+    return QColor(150, 150, 150);  // A / X
+}
+
+// Computes per-plane 256-bin histograms from the raw frame and renders
+// them into an image. Runs on the worker thread; painting on a QImage
+// is safe off the GUI thread.
+QImage computeHistogramImage(const RawImageDecoder *decoder, const QByteArray &data,
+                             const RawImageLayout &layout)
+{
+    struct Channel
+    {
+        QString name;
+        QColor color;
+        std::array<quint32, 256> bins{};
+        quint32 maxCount = 0;
+        double mean = 0;
+    };
+
+    QList<Channel> channels;
+    const QStringList planes = decoder->planeNames();
+    for (int i = 0; i < planes.size(); ++i) {
+        const auto planeImage = decoder->extractPlane(data, layout, i);
+        if (!planeImage)
+            continue;
+
+        Channel channel;
+        channel.name = planes.at(i);
+        channel.color = planeColor(channel.name);
+        quint64 sum = 0;
+        for (int row = 0; row < planeImage->height(); ++row) {
+            const uchar *line = planeImage->constScanLine(row);
+            for (int col = 0; col < planeImage->width(); ++col)
+                ++channel.bins[line[col]];
+        }
+        for (int bin = 0; bin < 256; ++bin) {
+            channel.maxCount = qMax(channel.maxCount, channel.bins[bin]);
+            sum += quint64(bin) * channel.bins[bin];
+        }
+        const qint64 pixelCount = qint64(planeImage->width()) * planeImage->height();
+        channel.mean = pixelCount > 0 ? double(sum) / double(pixelCount) : 0;
+        channels.append(channel);
+    }
+    if (channels.isEmpty())
+        return {};
+
+    const int margin = 8;
+    const int plotWidth = 512;
+    const int plotHeight = 120;
+    const int labelHeight = 20;
+    const int rowHeight = labelHeight + plotHeight + margin;
+    QImage image(margin * 2 + plotWidth, margin + channels.size() * rowHeight,
+                 QImage::Format_RGB32);
+    image.fill(Qt::white);
+
+    QPainter painter(&image);
+    for (int c = 0; c < channels.size(); ++c) {
+        const Channel &channel = channels.at(c);
+        const int top = margin + c * rowHeight;
+        painter.setPen(Qt::black);
+        painter.drawText(QRect(margin, top, plotWidth, labelHeight),
+                         Qt::AlignLeft | Qt::AlignVCenter,
+                         YuvViewer::tr("%1  (mean %2)")
+                             .arg(channel.name)
+                             .arg(channel.mean, 0, 'f', 1));
+        const int plotTop = top + labelHeight;
+        painter.setPen(QColor(180, 180, 180));
+        painter.drawRect(margin - 1, plotTop - 1, plotWidth + 1, plotHeight + 1);
+        painter.setPen(QPen(channel.color, 2));
+        for (int bin = 0; bin < 256; ++bin) {
+            const int height = channel.maxCount > 0
+                ? qRound(channel.bins[bin] * qreal(plotHeight) / channel.maxCount)
+                : 0;
+            const int x = margin + bin * 2 + 1;
+            painter.drawLine(x, plotTop + plotHeight, x, plotTop + plotHeight - height);
+        }
+    }
+    return image;
+}
 }
 
 // Image display widget for the YUV viewer. Unlike a QLabel with
@@ -551,6 +646,10 @@ void YuvViewer::setupYuvUi()
 {
     m_infoTable = addInfoTab(tr("Info"));
 
+    m_histogramLabel = new QLabel;
+    m_histogramLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    addTabPage(m_histogramLabel, tr("Histogram"));
+
     if (m_hasFileLayout) {
         reload();
         return;
@@ -626,7 +725,9 @@ void YuvViewer::reload()
                 promise.addResult(LoadResult(std::unexpected(image.error())));
                 return;
             }
-            promise.addResult(LoadedFrame{std::move(*data), std::move(*image)});
+            QImage histogram = computeHistogramImage(decoder, *data, loadLayout);
+            promise.addResult(LoadedFrame{std::move(*data), std::move(*image),
+                                          std::move(histogram)});
         },
         [this](int value) {
             statusMessage(tr("Loading... %1%").arg(value), tr("open"), 0);
@@ -641,6 +742,8 @@ void YuvViewer::reload()
             m_rawData = std::move(result->data);
             m_layout = loadLayout;
             displayImage(result->image);
+            if (m_histogramLabel)
+                m_histogramLabel->setPixmap(QPixmap::fromImage(result->histogram));
             updateInfoTab(fileName, loadLayout, decoder);
             const QString fileDescription = tr("\"%1\", %2x%3, %4 (stride=%5, scanline=%6)")
                                                 .arg(QDir::toNativeSeparators(fileName))
@@ -680,8 +783,9 @@ void YuvViewer::updateFrameUi(qint64 frameCount)
 
 void YuvViewer::cleanup()
 {
-    // The base class deletes the page widget; drop the dangling pointer.
+    // The base class deletes the page widgets; drop the dangling pointers.
     m_infoTable = nullptr;
+    m_histogramLabel = nullptr;
     AbstractViewer::cleanup();
 }
 
@@ -796,6 +900,8 @@ void YuvViewer::clear()
 
     if (m_infoTable)
         m_infoTable->setRowCount(0);
+    if (m_histogramLabel)
+        m_histogramLabel->clear();
 
     m_rawData.clear();
     m_layout = {};
@@ -1042,5 +1148,10 @@ void YuvViewer::retranslate()
         const int index = m_uiAssets.tabs->indexOf(m_infoTable);
         if (index >= 0)
             m_uiAssets.tabs->setTabText(index, tr("Info"));
+    }
+    if (m_histogramLabel && m_uiAssets.tabs) {
+        const int index = m_uiAssets.tabs->indexOf(m_histogramLabel);
+        if (index >= 0)
+            m_uiAssets.tabs->setTabText(index, tr("Histogram"));
     }
 }
