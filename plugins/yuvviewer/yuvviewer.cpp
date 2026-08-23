@@ -3,10 +3,12 @@
 
 #include "yuvviewer.h"
 
+#include "rawimagedecoder.h"
+
 #include <opencv2/core.hpp>
-#include <opencv2/imgproc.hpp>
 
 #include <QAction>
+#include <QComboBox>
 #include <QDataStream>
 #include <QDebug>
 #include <QDir>
@@ -30,60 +32,10 @@
 using namespace Qt::StringLiterals;
 
 namespace {
-constexpr int minimumDimension = 2;
-constexpr int maximumDimension = 32768;
+constexpr int minimumDimension = RawImageDecoder::minimumDimension;
+constexpr int maximumDimension = RawImageDecoder::maximumDimension;
 
-struct Nv12Layout
-{
-    int width = 0;
-    int height = 0;
-    int stride = 0;
-    int scanline = 0;
-
-    qint64 expectedByteSize() const
-    {
-        return qint64(stride) * qint64(scanline) * 3 / 2;
-    }
-};
-
-using LayoutResult = std::expected<Nv12Layout, QString>;
-using OptionalLayoutResult = std::expected<std::optional<Nv12Layout>, QString>;
-using DataResult = std::expected<QByteArray, QString>;
-using ImageResult = std::expected<QImage, QString>;
-
-LayoutResult validateLayout(const Nv12Layout &layout)
-{
-    if (layout.width < minimumDimension || layout.width > maximumDimension
-        || layout.height < minimumDimension || layout.height > maximumDimension) {
-        return std::unexpected(YuvViewer::tr("Width and height must be between %1 and %2.")
-                                   .arg(minimumDimension)
-                                   .arg(maximumDimension));
-    }
-    if ((layout.width % 2) != 0 || (layout.height % 2) != 0) {
-        return std::unexpected(YuvViewer::tr("NV12 width and height must both be even. "
-                                             "Received %1x%2.")
-                                   .arg(layout.width)
-                                   .arg(layout.height));
-    }
-    if (layout.stride < layout.width || (layout.stride % 2) != 0) {
-        return std::unexpected(YuvViewer::tr("NV12 stride must be even and at least the width. "
-                                             "Received width %1, stride %2.")
-                                   .arg(layout.width)
-                                   .arg(layout.stride));
-    }
-    if (layout.scanline < layout.height || (layout.scanline % 2) != 0) {
-        return std::unexpected(YuvViewer::tr("NV12 scanline must be even and at least the height. "
-                                             "Received height %1, scanline %2.")
-                                   .arg(layout.height)
-                                   .arg(layout.scanline));
-    }
-    if (layout.stride > maximumDimension || layout.scanline > maximumDimension) {
-        return std::unexpected(YuvViewer::tr("Stride and scanline must not exceed %1.")
-                                   .arg(maximumDimension));
-    }
-
-    return layout;
-}
+using OptionalLayoutResult = std::expected<std::optional<RawImageLayout>, QString>;
 
 std::expected<int, QString> capturedInteger(const QRegularExpressionMatch &match, int index,
                                             const QString &fieldName)
@@ -97,7 +49,7 @@ std::expected<int, QString> capturedInteger(const QRegularExpressionMatch &match
     return value;
 }
 
-OptionalLayoutResult layoutFromFileName(const QString &fileName)
+OptionalLayoutResult layoutFromFileName(const QString &fileName, const RawImageDecoder &decoder)
 {
     const QString baseName = QFileInfo(fileName).completeBaseName();
     static const QRegularExpression taggedPattern(
@@ -124,16 +76,16 @@ OptionalLayoutResult layoutFromFileName(const QString &fileName)
         if (!scanline)
             return std::unexpected(scanline.error());
 
-        const auto layout = validateLayout({*width, *height, *stride, *scanline});
+        const auto layout = decoder.validateLayout({*width, *height, *stride, *scanline});
         if (!layout)
             return std::unexpected(layout.error());
-        return std::optional<Nv12Layout>(*layout);
+        return std::optional<RawImageLayout>(*layout);
     }
 
     if (baseName.contains(QStringLiteral("_w["), Qt::CaseInsensitive)
         || baseName.contains(QStringLiteral("_h["), Qt::CaseInsensitive)) {
         return std::unexpected(YuvViewer::tr(
-            "The file name contains incomplete NV12 metadata. Expected "
+            "The file name contains incomplete image metadata. Expected "
             "\"_w[width]_h[height]_stride[stride]_scanline[scanline]\"."));
     }
 
@@ -144,7 +96,7 @@ OptionalLayoutResult layoutFromFileName(const QString &fileName)
         lastMatch = matches.next();
 
     if (!lastMatch.hasMatch())
-        return std::optional<Nv12Layout>();
+        return std::optional<RawImageLayout>();
 
     const auto width = capturedInteger(lastMatch, 1, YuvViewer::tr("width"));
     if (!width)
@@ -153,85 +105,10 @@ OptionalLayoutResult layoutFromFileName(const QString &fileName)
     if (!height)
         return std::unexpected(height.error());
 
-    const auto layout = validateLayout({*width, *height, *width, *height});
+    const auto layout = decoder.validateLayout({*width, *height, *width, *height});
     if (!layout)
         return std::unexpected(layout.error());
-    return std::optional<Nv12Layout>(*layout);
-}
-
-DataResult readNv12File(const QString &fileName, const Nv12Layout &layout)
-{
-    QFile file(fileName);
-    if (!file.open(QIODevice::ReadOnly)) {
-        return std::unexpected(YuvViewer::tr("Cannot open the file: %1")
-                                   .arg(file.errorString()));
-    }
-
-    const qint64 expectedSize = layout.expectedByteSize();
-    const qint64 actualSize = file.size();
-    if (actualSize != expectedSize) {
-        return std::unexpected(
-            YuvViewer::tr("File size does not match the NV12 layout. "
-                          "Expected %1 bytes, found %2 bytes "
-                          "(width=%3, height=%4, stride=%5, scanline=%6).")
-                .arg(expectedSize)
-                .arg(actualSize)
-                .arg(layout.width)
-                .arg(layout.height)
-                .arg(layout.stride)
-                .arg(layout.scanline));
-    }
-
-    QByteArray data = file.readAll();
-    if (file.error() != QFileDevice::NoError) {
-        return std::unexpected(YuvViewer::tr("Failed while reading the file: %1")
-                                   .arg(file.errorString()));
-    }
-    if (data.size() != expectedSize) {
-        return std::unexpected(YuvViewer::tr("The file read was incomplete. "
-                                             "Expected %1 bytes, received %2 bytes.")
-                                   .arg(expectedSize)
-                                   .arg(data.size()));
-    }
-
-    return data;
-}
-
-ImageResult convertNv12ToImage(const QByteArray &data, const Nv12Layout &layout)
-{
-    try {
-        auto *pixels = reinterpret_cast<uchar *>(const_cast<char *>(data.constData()));
-        const qint64 yPlaneBytes = qint64(layout.stride) * qint64(layout.scanline);
-
-        cv::Mat yPlane(layout.height, layout.width, CV_8UC1, pixels,
-                       static_cast<size_t>(layout.stride));
-        cv::Mat uvPlane(layout.height / 2, layout.width / 2, CV_8UC2,
-                        pixels + yPlaneBytes, static_cast<size_t>(layout.stride));
-        cv::Mat rgba;
-        cv::cvtColorTwoPlane(yPlane, uvPlane, rgba, cv::COLOR_YUV2RGBA_NV12);
-
-        if (rgba.empty() || rgba.cols != layout.width || rgba.rows != layout.height) {
-            return std::unexpected(YuvViewer::tr(
-                "OpenCV returned an empty image or unexpected dimensions."));
-        }
-
-        const QImage wrappedImage(rgba.data, rgba.cols, rgba.rows,
-                                  static_cast<qsizetype>(rgba.step),
-                                  QImage::Format_RGBA8888);
-        QImage image = wrappedImage.copy();
-        if (image.isNull())
-            return std::unexpected(YuvViewer::tr("Could not allocate the converted QImage."));
-        return image;
-    } catch (const cv::Exception &exception) {
-        return std::unexpected(YuvViewer::tr("OpenCV conversion failed: %1")
-                                   .arg(QString::fromLocal8Bit(exception.what())));
-    } catch (const std::exception &exception) {
-        return std::unexpected(YuvViewer::tr("NV12 conversion failed: %1")
-                                   .arg(QString::fromLocal8Bit(exception.what())));
-    } catch (...) {
-        return std::unexpected(YuvViewer::tr(
-            "NV12 conversion failed with an unknown exception."));
-    }
+    return std::optional<RawImageLayout>(*layout);
 }
 }
 
@@ -241,9 +118,9 @@ YuvViewer::YuvViewer()
       m_zoomOutAction(new QAction(this)),
       m_resetZoomAction(new QAction(this))
 {
-    // OpenCV 4.12's MinGW AVX2 NV12 converter can fault on some Windows
-    // systems instead of reporting an exception. Select the portable path
-    // before this plugin performs any OpenCV work.
+    // OpenCV 4.12's MinGW AVX2 semi-planar YUV converters can fault on some
+    // Windows systems instead of reporting an exception. Select the portable
+    // path before this plugin performs any OpenCV work.
     cv::setUseOptimized(false);
 
     connect(this, &AbstractViewer::uiInitialized, this, &YuvViewer::setupYuvUi);
@@ -295,12 +172,22 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
     m_heightSpinBox->setKeyboardTracking(false);
 
     m_formatLabel = new QLabel(toolBar);
+    m_formatComboBox = new QComboBox(toolBar);
+    for (const RawImageDecoder *decoder : RawImageDecoders::all())
+        m_formatComboBox->addItem(decoder->displayName());
+
+    m_decoder = RawImageDecoders::findByExtension(QFileInfo(file->fileName()).suffix());
+    if (!m_decoder)
+        m_decoder = RawImageDecoders::defaultDecoder();
+    m_formatComboBox->setCurrentIndex(RawImageDecoders::all().indexOf(m_decoder));
+    connect(m_formatComboBox, &QComboBox::activated, this, &YuvViewer::onFormatChanged);
 
     toolBar->addWidget(m_widthLabel);
     toolBar->addWidget(m_widthSpinBox);
     toolBar->addWidget(m_heightLabel);
     toolBar->addWidget(m_heightSpinBox);
     toolBar->addWidget(m_formatLabel);
+    toolBar->addWidget(m_formatComboBox);
     toolBar->addAction(m_reloadAction);
     toolBar->addSeparator();
     toolBar->addAction(m_zoomInAction);
@@ -311,11 +198,11 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
     m_fileWidth = m_fileHeight = m_fileStride = m_fileScanline = 0;
     m_metadataError.clear();
 
-    const auto parsedLayout = layoutFromFileName(file->fileName());
+    const auto parsedLayout = layoutFromFileName(file->fileName(), *m_decoder);
     if (!parsedLayout) {
         m_metadataError = parsedLayout.error();
     } else if (parsedLayout->has_value()) {
-        const Nv12Layout &layout = parsedLayout->value();
+        const RawImageLayout &layout = parsedLayout->value();
         m_hasFileLayout = true;
         m_fileWidth = layout.width;
         m_fileHeight = layout.height;
@@ -331,13 +218,20 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
 
 QStringList YuvViewer::supportedMimeTypes() const
 {
-    return {"video/x-raw-nv12"_L1};
+    QStringList mimeTypes;
+    for (const RawImageDecoder *decoder : RawImageDecoders::all())
+        mimeTypes << decoder->mimeType();
+    return mimeTypes;
 }
 
 QStringList YuvViewer::supportedExtensions() const
 {
     // ViewerFactory currently compares suffixes case-sensitively.
-    return {"nv12"_L1, "NV12"_L1, "yuv"_L1, "YUV"_L1};
+    QStringList extensions;
+    for (const RawImageDecoder *decoder : RawImageDecoders::all())
+        extensions << decoder->fileExtensions();
+    extensions << "yuv"_L1 << "YUV"_L1;
+    return extensions;
 }
 
 bool YuvViewer::hasContent() const
@@ -355,6 +249,7 @@ QByteArray YuvViewer::saveState() const
     stream << QString(viewerName());
     stream << m_widthSpinBox->value();
     stream << m_heightSpinBox->value();
+    stream << (m_decoder ? QString(m_decoder->id()) : QString());
     return state;
 }
 
@@ -368,9 +263,21 @@ bool YuvViewer::restoreState(QByteArray &state)
 
     if (stream.status() != QDataStream::Ok || viewer != viewerName())
         return false;
-    if (width < minimumDimension || width > maximumDimension || (width % 2) != 0
-        || height < minimumDimension || height > maximumDimension || (height % 2) != 0) {
+    if (width < minimumDimension || width > maximumDimension
+        || height < minimumDimension || height > maximumDimension) {
         return false;
+    }
+
+    // States saved before multi-format support end after the height field.
+    QString formatId;
+    if (!stream.atEnd())
+        stream >> formatId;
+    if (!formatId.isEmpty()) {
+        if (const RawImageDecoder *decoder = RawImageDecoders::findById(formatId)) {
+            m_decoder = decoder;
+            if (m_formatComboBox)
+                m_formatComboBox->setCurrentIndex(RawImageDecoders::all().indexOf(decoder));
+        }
     }
 
     if (!m_hasFileLayout && m_metadataError.isEmpty()
@@ -404,44 +311,56 @@ void YuvViewer::reload()
 {
     clear();
 
-    if (!m_file || !m_widthSpinBox || !m_heightSpinBox) {
+    if (!m_file || !m_widthSpinBox || !m_heightSpinBox || !m_decoder) {
         reportError(tr("The YUV viewer is not fully initialized."));
         return;
     }
 
     const int width = m_widthSpinBox->value();
     const int height = m_heightSpinBox->value();
-    Nv12Layout requestedLayout{width, height, width, height};
+    RawImageLayout requestedLayout{width, height, width, height};
     if (m_hasFileLayout && width == m_fileWidth && height == m_fileHeight) {
         requestedLayout.stride = m_fileStride;
         requestedLayout.scanline = m_fileScanline;
     }
 
-    const auto layout = validateLayout(requestedLayout);
+    const auto layout = m_decoder->validateLayout(requestedLayout);
     if (!layout) {
         reportError(layout.error());
         return;
     }
 
-    const auto data = readNv12File(m_file->fileName(), *layout);
+    const auto data = m_decoder->readData(m_file->fileName(), *layout);
     if (!data) {
         reportError(data.error());
         return;
     }
 
-    const auto image = convertNv12ToImage(*data, *layout);
+    const auto image = m_decoder->convertToImage(*data, *layout);
     if (!image) {
         reportError(image.error());
         return;
     }
 
     displayImage(*image);
-    statusMessage(tr("Opened \"%1\", %2x%3, NV12 (stride=%4, scanline=%5).")
+    statusMessage(tr("Opened \"%1\", %2x%3, %4 (stride=%5, scanline=%6).")
                       .arg(QDir::toNativeSeparators(m_file->fileName()))
                       .arg(layout->width)
                       .arg(layout->height)
+                      .arg(m_decoder->displayName())
                       .arg(layout->stride)
                       .arg(layout->scanline));
+}
+
+void YuvViewer::onFormatChanged()
+{
+    const int index = m_formatComboBox ? m_formatComboBox->currentIndex() : -1;
+    if (index >= 0)
+        m_decoder = RawImageDecoders::all().at(index);
+
+    // Without a known layout the viewer still waits for width/height input.
+    if (m_hasFileLayout || hasContent())
+        reload();
 }
 
 void YuvViewer::clear()
@@ -548,7 +467,7 @@ void YuvViewer::retranslate()
     toolBars().constFirst()->setWindowTitle(tr("YUV Image"));
     m_widthLabel->setText(tr("Width:"));
     m_heightLabel->setText(tr("Height:"));
-    m_formatLabel->setText(tr("Format: NV12"));
+    m_formatLabel->setText(tr("Format:"));
     m_widthSpinBox->setSuffix(tr(" px"));
     m_heightSpinBox->setSuffix(tr(" px"));
     m_reloadAction->setText(tr("&Reload"));
