@@ -40,8 +40,9 @@ public:
 
     static constexpr int minimumDimension = 2;
     static constexpr int maximumDimension = 32768;
-    // Stride is measured in bytes and may carry several bytes per pixel.
-    static constexpr int maximumStride = maximumDimension * 4;
+    // Stride is measured in bytes and may carry several bytes per pixel
+    // (up to 8 for RGBA64).
+    static constexpr int maximumStride = maximumDimension * 8;
 
     RawImageDecoder() = default;
     virtual ~RawImageDecoder() = default;

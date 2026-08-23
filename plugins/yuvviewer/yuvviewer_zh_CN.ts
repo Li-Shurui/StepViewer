@@ -2,19 +2,32 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="zh_CN" sourcelanguage="en">
 <context>
+    <name>PackedRgb16Decoder</name>
+    <message>
+        <location filename="rawimagedecoder.cpp" line="1778"/>
+        <source>%1 stride must be at least the width times %2 bytes. Received width %3, stride %4.</source>
+        <translation type="unfinished">%1 的 stride 至少为宽度乘以 %2 字节。当前宽度 %3，stride %4。</translation>
+    </message>
+    <message>
+        <location filename="rawimagedecoder.cpp" line="1786"/>
+        <source>%1 scanline must be at least the height. Received height %2, scanline %3.</source>
+        <translation type="unfinished">%1 的 scanline 至少为高度。当前高度 %2，scanline %3。</translation>
+    </message>
+</context>
+<context>
     <name>PackedRgbDecoder</name>
     <message>
-        <location filename="rawimagedecoder.cpp" line="1062"/>
+        <location filename="rawimagedecoder.cpp" line="1380"/>
         <source>%1 stride must be at least the width times %2 bytes. Received width %3, stride %4.</source>
         <translation>%1 的 stride 至少为宽度乘以 %2 字节。当前宽度 %3，stride %4。</translation>
     </message>
     <message>
-        <location filename="rawimagedecoder.cpp" line="1070"/>
+        <location filename="rawimagedecoder.cpp" line="1388"/>
         <source>%1 scanline must be at least the height. Received height %2, scanline %3.</source>
         <translation>%1 的 scanline 至少为高度。当前高度 %2，scanline %3。</translation>
     </message>
     <message>
-        <location filename="rawimagedecoder.cpp" line="1096"/>
+        <location filename="rawimagedecoder.cpp" line="1415"/>
         <source>Could not allocate the converted QImage.</source>
         <translation>无法分配转换后的 QImage。</translation>
     </message>
@@ -22,30 +35,38 @@
 <context>
     <name>PackedYuv422Decoder</name>
     <message>
-        <location filename="rawimagedecoder.cpp" line="552"/>
+        <location filename="rawimagedecoder.cpp" line="868"/>
         <source>%1 width must be even. Received %2.</source>
         <translation>%1 的宽度必须为偶数。当前为 %2。</translation>
     </message>
     <message>
-        <location filename="rawimagedecoder.cpp" line="557"/>
+        <location filename="rawimagedecoder.cpp" line="873"/>
         <source>%1 stride must be at least twice the width. Received width %2, stride %3.</source>
         <translation>%1 的 stride 至少为宽度的两倍。当前宽度 %2，stride %3。</translation>
     </message>
     <message>
-        <location filename="rawimagedecoder.cpp" line="564"/>
+        <location filename="rawimagedecoder.cpp" line="880"/>
         <source>%1 scanline must be at least the height. Received height %2, scanline %3.</source>
         <translation>%1 的 scanline 至少为高度。当前高度 %2，scanline %3。</translation>
     </message>
 </context>
 <context>
+    <name>PlanarYuv420p16Decoder</name>
+    <message>
+        <location filename="rawimagedecoder.cpp" line="733"/>
+        <source>%1 stride must be at least twice the width (16-bit samples). Received width %2, stride %3.</source>
+        <translation>%1 的 stride 至少为宽度的两倍（16 位采样）。当前宽度 %2，stride %3。</translation>
+    </message>
+</context>
+<context>
     <name>PlanarYuv444Decoder</name>
     <message>
-        <location filename="rawimagedecoder.cpp" line="933"/>
+        <location filename="rawimagedecoder.cpp" line="1251"/>
         <source>%1 stride must be at least the width. Received width %2, stride %3.</source>
         <translation>%1 的 stride 至少为宽度。当前宽度 %2，stride %3。</translation>
     </message>
     <message>
-        <location filename="rawimagedecoder.cpp" line="940"/>
+        <location filename="rawimagedecoder.cpp" line="1258"/>
         <source>%1 scanline must be at least the height. Received height %2, scanline %3.</source>
         <translation>%1 的 scanline 至少为高度。当前高度 %2，scanline %3。</translation>
     </message>
@@ -157,6 +178,8 @@
         <location filename="rawimagedecoder.cpp" line="231"/>
         <location filename="rawimagedecoder.cpp" line="242"/>
         <location filename="rawimagedecoder.cpp" line="259"/>
+        <location filename="rawimagedecoder.cpp" line="294"/>
+        <location filename="rawimagedecoder.cpp" line="310"/>
         <source>Could not allocate the plane image.</source>
         <translation>无法分配平面图像。</translation>
     </message>
@@ -166,40 +189,56 @@
         <translation>无效的平面索引 %1。</translation>
     </message>
     <message>
-        <location filename="rawimagedecoder.cpp" line="281"/>
+        <location filename="rawimagedecoder.cpp" line="322"/>
         <source>Y=%1 U=%2 V=%3</source>
         <translation>Y=%1 U=%2 V=%3</translation>
     </message>
     <message>
-        <location filename="rawimagedecoder.cpp" line="286"/>
+        <location filename="rawimagedecoder.cpp" line="327"/>
         <source>R=%1 G=%2 B=%3</source>
         <translation>R=%1 G=%2 B=%3</translation>
     </message>
     <message>
-        <location filename="rawimagedecoder.cpp" line="291"/>
+        <location filename="rawimagedecoder.cpp" line="332"/>
         <source>R=%1 G=%2 B=%3 A=%4</source>
         <translation>R=%1 G=%2 B=%3 A=%4</translation>
     </message>
 </context>
 <context>
+    <name>Rgba64Decoder</name>
+    <message>
+        <location filename="rawimagedecoder.cpp" line="1883"/>
+        <source>Could not allocate the converted QImage.</source>
+        <translation type="unfinished">无法分配转换后的 QImage。</translation>
+    </message>
+</context>
+<context>
+    <name>SemiPlanarYuv420p16Decoder</name>
+    <message>
+        <location filename="rawimagedecoder.cpp" line="455"/>
+        <source>%1 stride must be at least twice the width (16-bit samples). Received width %2, stride %3.</source>
+        <translation>%1 的 stride 至少为宽度的两倍（16 位采样）。当前宽度 %2，stride %3。</translation>
+    </message>
+</context>
+<context>
     <name>Y8Decoder</name>
     <message>
-        <location filename="rawimagedecoder.cpp" line="1462"/>
+        <location filename="rawimagedecoder.cpp" line="1910"/>
         <source>%1 stride must be at least the width. Received width %2, stride %3.</source>
         <translation>%1 的 stride 至少为宽度。当前宽度 %2，stride %3。</translation>
     </message>
     <message>
-        <location filename="rawimagedecoder.cpp" line="1469"/>
+        <location filename="rawimagedecoder.cpp" line="1917"/>
         <source>%1 scanline must be at least the height. Received height %2, scanline %3.</source>
         <translation>%1 的 scanline 至少为高度。当前高度 %2，scanline %3。</translation>
     </message>
     <message>
-        <location filename="rawimagedecoder.cpp" line="1493"/>
+        <location filename="rawimagedecoder.cpp" line="1941"/>
         <source>Could not allocate the converted QImage.</source>
         <translation>无法分配转换后的 QImage。</translation>
     </message>
     <message>
-        <location filename="rawimagedecoder.cpp" line="1512"/>
+        <location filename="rawimagedecoder.cpp" line="1960"/>
         <source>Y=%1</source>
         <translation>Y=%1</translation>
     </message>

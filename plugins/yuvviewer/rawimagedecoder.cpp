@@ -276,6 +276,47 @@ RawImageDecoder::ImageResult invalidPlane(int plane)
     return std::unexpected(RawImageDecoder::tr("Invalid plane index %1.").arg(plane));
 }
 
+// Reads one little-endian 16-bit sample.
+inline quint16 readLe16(const uchar *p)
+{
+    quint16 value;
+    memcpy(&value, p, sizeof(value));
+    return value;
+}
+
+// Wraps a 16-bit plane as 8-bit grayscale, taking the most significant
+// byte of each MSB-aligned sample.
+RawImageDecoder::ImageResult grayscale16Plane(const uchar *base, int width, int height,
+                                              qsizetype strideBytes)
+{
+    QImage image(width, height, QImage::Format_Grayscale8);
+    if (image.isNull())
+        return std::unexpected(RawImageDecoder::tr("Could not allocate the plane image."));
+    for (int row = 0; row < height; ++row) {
+        const uchar *src = base + qint64(row) * strideBytes;
+        uchar *dst = image.scanLine(row);
+        for (int col = 0; col < width; ++col)
+            dst[col] = uchar(readLe16(src + 2 * col) >> 8);
+    }
+    return image;
+}
+
+// 16-bit variant of stridedPlane(); step and offset are in samples.
+RawImageDecoder::ImageResult strided16Plane(const uchar *base, int width, int height,
+                                            qint64 rowStrideBytes, int step, int offset)
+{
+    QImage image(width, height, QImage::Format_Grayscale8);
+    if (image.isNull())
+        return std::unexpected(RawImageDecoder::tr("Could not allocate the plane image."));
+    for (int row = 0; row < height; ++row) {
+        const uchar *src = base + qint64(row) * rowStrideBytes;
+        uchar *dst = image.scanLine(row);
+        for (int col = 0; col < width; ++col)
+            dst[col] = uchar(readLe16(src + 2 * (col * step + offset)) >> 8);
+    }
+    return image;
+}
+
 QString describeYuv(int y, int u, int v)
 {
     return RawImageDecoder::tr("Y=%1 U=%2 V=%3").arg(y).arg(u).arg(v);
@@ -392,6 +433,144 @@ public:
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_NV21; }
     bool chromaOrderIsUV() const override { return false; }
+};
+
+// Shared implementation for 16-bit semi-planar YUV 4:2:0 formats
+// (P010/P016): like NV12, but each sample is stored MSB-aligned in a
+// little-endian 16-bit container. Display conversion takes the top 8
+// bits of every sample and reuses the 8-bit NV12 path; the pixel probe
+// reports values shifted back to the native bit depth.
+class SemiPlanarYuv420p16Decoder : public RawImageDecoder
+{
+    Q_DECLARE_TR_FUNCTIONS(SemiPlanarYuv420p16Decoder)
+
+public:
+    LayoutResult validateLayout(const RawImageLayout &layout) const override
+    {
+        const LayoutResult baseResult = validateYuv420Layout(*this, layout);
+        if (!baseResult)
+            return baseResult;
+
+        if (layout.stride < layout.width * 2) {
+            return std::unexpected(tr("%1 stride must be at least twice the width "
+                                      "(16-bit samples). Received width %2, stride %3.")
+                                       .arg(displayName())
+                                       .arg(layout.width)
+                                       .arg(layout.stride));
+        }
+        return layout;
+    }
+
+    qint64 expectedByteSize(const RawImageLayout &layout) const override
+    {
+        // stride is in bytes; the chroma plane covers half the lines.
+        return qint64(layout.stride) * qint64(layout.scanline) * 3 / 2;
+    }
+
+    int defaultStride(int width) const override { return width * 2; }
+
+    ImageResult convertToImage(const QByteArray &data,
+                               const RawImageLayout &layout) const override
+    {
+        return runConversion(*this, [&]() -> ImageResult {
+            const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+            const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+
+            // Downconvert to tightly packed 8-bit semi-planar.
+            QByteArray y8(qint64(layout.width) * layout.height, Qt::Uninitialized);
+            QByteArray uv8(qint64(layout.width) * layout.height / 2, Qt::Uninitialized);
+            auto *yDst = reinterpret_cast<uchar *>(y8.data());
+            auto *uvDst = reinterpret_cast<uchar *>(uv8.data());
+            for (int row = 0; row < layout.height; ++row) {
+                const uchar *src = pixels + qint64(row) * layout.stride;
+                uchar *dst = yDst + qint64(row) * layout.width;
+                for (int col = 0; col < layout.width; ++col)
+                    dst[col] = uchar(readLe16(src + 2 * col) >> 8);
+            }
+            const int chromaSamples = layout.width;  // interleaved U+V per row
+            for (int row = 0; row < layout.height / 2; ++row) {
+                const uchar *src = pixels + yPlaneBytes + qint64(row) * layout.stride;
+                uchar *dst = uvDst + qint64(row) * chromaSamples;
+                for (int col = 0; col < chromaSamples; ++col)
+                    dst[col] = uchar(readLe16(src + 2 * col) >> 8);
+            }
+
+            cv::Mat yPlane(layout.height, layout.width, CV_8UC1, yDst,
+                           static_cast<size_t>(layout.width));
+            cv::Mat uvPlane(layout.height / 2, layout.width / 2, CV_8UC2, uvDst,
+                            static_cast<size_t>(chromaSamples));
+            cv::Mat rgba;
+            cv::cvtColorTwoPlane(yPlane, uvPlane, rgba, cv::COLOR_YUV2RGBA_NV12);
+            return rgbaMatToImage(rgba, layout);
+        });
+    }
+
+    QStringList planeNames() const override
+    {
+        return {QStringLiteral("Y"), QStringLiteral("U"), QStringLiteral("V")};
+    }
+
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        switch (plane) {
+        case 0:
+            return grayscale16Plane(pixels, layout.width, layout.height, layout.stride);
+        case 1:
+            return strided16Plane(pixels + yPlaneBytes, layout.width / 2, layout.height / 2,
+                                  layout.stride, 2, 0);
+        case 2:
+            return strided16Plane(pixels + yPlaneBytes, layout.width / 2, layout.height / 2,
+                                  layout.stride, 2, 1);
+        default:
+            return invalidPlane(plane);
+        }
+    }
+
+    QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                          int x, int y) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        const int shift = 16 - bitDepth();
+        const int luma = readLe16(pixels + qint64(y) * layout.stride + 2 * x) >> shift;
+        const uchar *chroma = pixels + yPlaneBytes + qint64(y / 2) * layout.stride
+                              + (x / 2) * 4;
+        const int u = readLe16(chroma) >> shift;
+        const int v = readLe16(chroma + 2) >> shift;
+        return describeYuv(luma, u, v);
+    }
+
+protected:
+    // 10 for P010, 16 for P016. Both are MSB-aligned, so the top 8 bits
+    // always carry the most significant part of the sample.
+    virtual int bitDepth() const = 0;
+};
+
+class P010Decoder final : public SemiPlanarYuv420p16Decoder
+{
+public:
+    QLatin1StringView id() const override { return "p010"_L1; }
+    QString displayName() const override { return QStringLiteral("P010"); }
+    QString mimeType() const override { return "video/x-raw-p010"_L1; }
+    QStringList fileExtensions() const override { return {"p010"_L1, "P010"_L1}; }
+
+protected:
+    int bitDepth() const override { return 10; }
+};
+
+class P016Decoder final : public SemiPlanarYuv420p16Decoder
+{
+public:
+    QLatin1StringView id() const override { return "p016"_L1; }
+    QString displayName() const override { return QStringLiteral("P016"); }
+    QString mimeType() const override { return "video/x-raw-p016"_L1; }
+    QStringList fileExtensions() const override { return {"p016"_L1, "P016"_L1}; }
+
+protected:
+    int bitDepth() const override { return 16; }
 };
 
 // Shared implementation for three-plane (planar) YUV 4:2:0 formats:
@@ -532,6 +711,143 @@ public:
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_YV12; }
     bool chromaOrderIsUV() const override { return false; }
+};
+
+// Shared implementation for 16-bit three-plane (planar) YUV 4:2:0
+// formats (I010/I016): like I420, but each sample is stored MSB-aligned
+// in a little-endian 16-bit container. Display conversion takes the top
+// 8 bits of every sample and reuses the 8-bit I420 path; the pixel
+// probe reports values shifted back to the native bit depth.
+class PlanarYuv420p16Decoder : public RawImageDecoder
+{
+    Q_DECLARE_TR_FUNCTIONS(PlanarYuv420p16Decoder)
+
+public:
+    LayoutResult validateLayout(const RawImageLayout &layout) const override
+    {
+        const LayoutResult baseResult = validateYuv420Layout(*this, layout);
+        if (!baseResult)
+            return baseResult;
+
+        if (layout.stride < layout.width * 2) {
+            return std::unexpected(tr("%1 stride must be at least twice the width "
+                                      "(16-bit samples). Received width %2, stride %3.")
+                                       .arg(displayName())
+                                       .arg(layout.width)
+                                       .arg(layout.stride));
+        }
+        return layout;
+    }
+
+    qint64 expectedByteSize(const RawImageLayout &layout) const override
+    {
+        return qint64(layout.stride) * qint64(layout.scanline) * 3 / 2;
+    }
+
+    int defaultStride(int width) const override { return width * 2; }
+
+    ImageResult convertToImage(const QByteArray &data,
+                               const RawImageLayout &layout) const override
+    {
+        return runConversion(*this, [&]() -> ImageResult {
+            const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+            const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+            const qint64 chromaStride = layout.stride / 2;  // bytes per chroma row
+            const qint64 chromaPlaneBytes = chromaStride * (layout.scanline / 2);
+
+            // Downconvert to tightly packed 8-bit I420.
+            QByteArray tight(qint64(layout.width) * layout.height * 3 / 2, Qt::Uninitialized);
+            auto *dst = reinterpret_cast<uchar *>(tight.data());
+            const uchar *planeSrc[3] = {pixels,
+                                        pixels + yPlaneBytes,
+                                        pixels + yPlaneBytes + chromaPlaneBytes};
+            const int planeRows[3] = {layout.height, layout.height / 2, layout.height / 2};
+            const int planeSamples[3] = {layout.width, layout.width / 2, layout.width / 2};
+            const qint64 planeStride[3] = {layout.stride, chromaStride, chromaStride};
+            for (int plane = 0; plane < 3; ++plane) {
+                for (int row = 0; row < planeRows[plane]; ++row) {
+                    const uchar *src = planeSrc[plane] + qint64(row) * planeStride[plane];
+                    for (int col = 0; col < planeSamples[plane]; ++col)
+                        *dst++ = uchar(readLe16(src + 2 * col) >> 8);
+                }
+            }
+
+            cv::Mat yuv(layout.height * 3 / 2, layout.width, CV_8UC1,
+                        reinterpret_cast<uchar *>(tight.data()));
+            cv::Mat rgba;
+            cv::cvtColor(yuv, rgba, cv::COLOR_YUV2RGBA_I420);
+            return rgbaMatToImage(rgba, layout);
+        });
+    }
+
+    QStringList planeNames() const override
+    {
+        return {QStringLiteral("Y"), QStringLiteral("U"), QStringLiteral("V")};
+    }
+
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        const qint64 chromaPlaneBytes = qint64(layout.stride / 2) * (layout.scanline / 2);
+        switch (plane) {
+        case 0:
+            return grayscale16Plane(pixels, layout.width, layout.height, layout.stride);
+        case 1:
+            return grayscale16Plane(pixels + yPlaneBytes, layout.width / 2,
+                                    layout.height / 2, layout.stride / 2);
+        case 2:
+            return grayscale16Plane(pixels + yPlaneBytes + chromaPlaneBytes,
+                                    layout.width / 2, layout.height / 2, layout.stride / 2);
+        default:
+            return invalidPlane(plane);
+        }
+    }
+
+    QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                          int x, int y) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        const qint64 chromaStride = layout.stride / 2;
+        const qint64 chromaPlaneBytes = chromaStride * (layout.scanline / 2);
+        const int shift = 16 - bitDepth();
+        const int luma = readLe16(pixels + qint64(y) * layout.stride + 2 * x) >> shift;
+        const int u = readLe16(pixels + yPlaneBytes + qint64(y / 2) * chromaStride
+                               + 2 * (x / 2)) >> shift;
+        const int v = readLe16(pixels + yPlaneBytes + chromaPlaneBytes
+                               + qint64(y / 2) * chromaStride + 2 * (x / 2)) >> shift;
+        return describeYuv(luma, u, v);
+    }
+
+protected:
+    // 10 for I010, 16 for I016. Both are MSB-aligned.
+    virtual int bitDepth() const = 0;
+};
+
+class I010Decoder final : public PlanarYuv420p16Decoder
+{
+public:
+    QLatin1StringView id() const override { return "i010"_L1; }
+    QString displayName() const override { return QStringLiteral("I010"); }
+    QString mimeType() const override { return "video/x-raw-i010"_L1; }
+    QStringList fileExtensions() const override { return {"i010"_L1, "I010"_L1}; }
+
+protected:
+    int bitDepth() const override { return 10; }
+};
+
+class I016Decoder final : public PlanarYuv420p16Decoder
+{
+public:
+    QLatin1StringView id() const override { return "i016"_L1; }
+    QString displayName() const override { return QStringLiteral("I016"); }
+    QString mimeType() const override { return "video/x-raw-i016"_L1; }
+    QStringList fileExtensions() const override { return {"i016"_L1, "I016"_L1}; }
+
+protected:
+    int bitDepth() const override { return 16; }
 };
 
 // Shared implementation for packed (interleaved) YUV 4:2:2 formats:
@@ -1443,6 +1759,135 @@ protected:
     }
 };
 
+// Shared implementation for packed 16-bit-per-channel RGB formats
+// (RGB48/RGBA64): a single plane of little-endian 16-bit samples.
+// Unlike PackedRgbDecoder, channels are whole 16-bit samples, so plane
+// extraction and the pixel probe work on sample offsets.
+class PackedRgb16Decoder : public RawImageDecoder
+{
+    Q_DECLARE_TR_FUNCTIONS(PackedRgb16Decoder)
+
+public:
+    LayoutResult validateLayout(const RawImageLayout &layout) const override
+    {
+        const LayoutResult baseResult = RawImageDecoder::validateLayout(layout);
+        if (!baseResult)
+            return baseResult;
+
+        if (layout.stride < layout.width * bytesPerPixel()) {
+            return std::unexpected(tr("%1 stride must be at least the width times %2 bytes. "
+                                      "Received width %3, stride %4.")
+                                       .arg(displayName())
+                                       .arg(bytesPerPixel())
+                                       .arg(layout.width)
+                                       .arg(layout.stride));
+        }
+        if (layout.scanline < layout.height) {
+            return std::unexpected(tr("%1 scanline must be at least the height. "
+                                      "Received height %2, scanline %3.")
+                                       .arg(displayName())
+                                       .arg(layout.height)
+                                       .arg(layout.scanline));
+        }
+
+        return layout;
+    }
+
+    qint64 expectedByteSize(const RawImageLayout &layout) const override
+    {
+        return qint64(layout.stride) * qint64(layout.scanline);
+    }
+
+    int defaultStride(int width) const override { return width * bytesPerPixel(); }
+
+    QStringList planeNames() const override
+    {
+        QStringList names{QStringLiteral("R"), QStringLiteral("G"), QStringLiteral("B")};
+        if (bytesPerPixel() == 8)
+            names << QStringLiteral("A");
+        return names;
+    }
+
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const override
+    {
+        if (plane < 0 || plane >= planeNames().size())
+            return invalidPlane(plane);
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        return strided16Plane(pixels, layout.width, layout.height, layout.stride,
+                              bytesPerPixel() / 2, plane);
+    }
+
+    QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                          int x, int y) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const uchar *pixel = pixels + qint64(y) * layout.stride + x * bytesPerPixel();
+        const int r = readLe16(pixel);
+        const int g = readLe16(pixel + 2);
+        const int b = readLe16(pixel + 4);
+        if (bytesPerPixel() == 8)
+            return describeRgba(r, g, b, readLe16(pixel + 6));
+        return describeRgb(r, g, b);
+    }
+
+protected:
+    // 6 for RGB48, 8 for RGBA64.
+    virtual int bytesPerPixel() const = 0;
+};
+
+class Rgb48Decoder final : public PackedRgb16Decoder
+{
+public:
+    QLatin1StringView id() const override { return "rgb48"_L1; }
+    QString displayName() const override { return QStringLiteral("RGB48"); }
+    QString mimeType() const override { return "video/x-raw-rgb48"_L1; }
+    QStringList fileExtensions() const override { return {"rgb48"_L1, "RGB48"_L1}; }
+
+    ImageResult convertToImage(const QByteArray &data,
+                               const RawImageLayout &layout) const override
+    {
+        return runConversion(*this, [&]() -> ImageResult {
+            auto *pixels = reinterpret_cast<uchar *>(const_cast<char *>(data.constData()));
+            cv::Mat rgb(layout.height, layout.width, CV_16UC3, pixels,
+                        static_cast<size_t>(layout.stride));
+            // OpenCV preserves the 16-bit depth through the conversion.
+            cv::Mat rgba;
+            cv::cvtColor(rgb, rgba, cv::COLOR_RGB2RGBA);
+            return rgbaMatToImage(rgba, layout, QImage::Format_RGBA64);
+        });
+    }
+
+protected:
+    int bytesPerPixel() const override { return 6; }
+};
+
+class Rgba64Decoder final : public PackedRgb16Decoder
+{
+public:
+    QLatin1StringView id() const override { return "rgba64"_L1; }
+    QString displayName() const override { return QStringLiteral("RGBA64"); }
+    QString mimeType() const override { return "video/x-raw-rgba64"_L1; }
+    QStringList fileExtensions() const override { return {"rgba64"_L1, "RGBA64"_L1}; }
+
+    ImageResult convertToImage(const QByteArray &data,
+                               const RawImageLayout &layout) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        // Little-endian 16-bit R,G,B,A samples match QImage::Format_RGBA64.
+        const QImage wrappedImage(pixels, layout.width, layout.height,
+                                  static_cast<qsizetype>(layout.stride),
+                                  QImage::Format_RGBA64);
+        QImage image = wrappedImage.copy();
+        if (image.isNull())
+            return std::unexpected(tr("Could not allocate the converted QImage."));
+        return image;
+    }
+
+protected:
+    int bytesPerPixel() const override { return 8; }
+};
+
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
@@ -1526,8 +1971,12 @@ const QList<const RawImageDecoder *> &all()
     static const QList<const RawImageDecoder *> decoders = {
         new Nv12Decoder,
         new Nv21Decoder,
+        new P010Decoder,
+        new P016Decoder,
         new I420Decoder,
         new Yv12Decoder,
+        new I010Decoder,
+        new I016Decoder,
         new Yuy2Decoder,
         new UyvyDecoder,
         new YvyuDecoder,
@@ -1547,6 +1996,8 @@ const QList<const RawImageDecoder *> &all()
         new Bgr565Decoder,
         new Rgb555Decoder,
         new Bgr555Decoder,
+        new Rgb48Decoder,
+        new Rgba64Decoder,
         new Y8Decoder,
     };
     return decoders;
