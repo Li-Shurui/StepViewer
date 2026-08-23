@@ -84,6 +84,11 @@ target_link_libraries(yuvviewer PRIVATE
     ${yuvviewer_opencv_libraries}
 )
 
+qt_add_translations(yuvviewer
+    SOURCE_TARGETS yuvviewer
+    TS_FILE_BASE yuvviewer
+)
+
 if(WIN32 AND TARGET opencv_core AND TARGET opencv_imgproc)
     get_target_property(_yuvviewer_opencv_type opencv_core TYPE)
     if(_yuvviewer_opencv_type STREQUAL "SHARED_LIBRARY")

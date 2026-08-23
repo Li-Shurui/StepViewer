@@ -9,7 +9,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Concurrent LinguistTools
 
 qt_standard_project_setup(REQUIRES 6.8
     I18N_SOURCE_LANGUAGE en
-    I18N_TRANSLATED_LANGUAGES de
+    I18N_TRANSLATED_LANGUAGES zh_CN
 )
 
 add_compile_definitions(QT_NO_CAST_FROM_ASCII)

@@ -385,9 +385,10 @@
 
     \section1 Translations
 
-    The application's user interface is available in English and German.
-    The default language is auto-selected by Qt: German if the system
-    language is German; otherwise, English. Also, the user can switch
+    The application's user interface is available in English and
+    Simplified Chinese. The default language is auto-selected by Qt:
+    Simplified Chinese if the system language is Chinese; otherwise,
+    English. Also, the user can switch
     the language in the \uicontrol Help > \uicontrol Language menu.
     Each plugin, as well as the main application, is independently
     responsible for loading its own translations during runtime.
@@ -402,7 +403,7 @@
 
     The \c documentviewer target defines the main application. It
     stores and loads the localized strings for the target in
-    docviewer_de.ts and docviewer_en.ts files. Furthermore,
+    docviewer_zh_CN.ts and docviewer_en.ts files. Furthermore,
     it merges the respective \c{qtbase translations} provided by
     Qt into the generated translation files, so that
     also Qt dialogs like the print dialog are properly translated:

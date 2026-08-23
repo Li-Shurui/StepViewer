@@ -21,6 +21,11 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationName("DocumentViewer"_L1);
     QCoreApplication::setApplicationVersion("1.0"_L1);
 
+    // Start in English regardless of the system language. All translators
+    // (application and plugins) resolve the default-constructed QLocale;
+    // the Help > Language menu overrides this at runtime.
+    // QLocale::setDefault(QLocale(QLocale::English)); 
+
     Translator mainTranslator;
     mainTranslator.setBaseName("docviewer"_L1);
     mainTranslator.install();

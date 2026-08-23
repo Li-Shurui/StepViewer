@@ -29,8 +29,8 @@ MainWindow::MainWindow(Translator &translator, QWidget *parent)
     connect(ui->actionOpen, &QAction::triggered, this, &MainWindow::onActionOpenTriggered);
     connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::onActionAboutTriggered);
     connect(ui->actionAboutQt, &QAction::triggered, this, &MainWindow::onActionAboutQtTriggered);
-    connect(ui->actionDeutsch, &QAction::triggered, this,
-            [this] { onActionSwitchLanguage(QLocale::German); });
+    connect(ui->actionChinese, &QAction::triggered, this,
+            [this] { onActionSwitchLanguage(QLocale::Chinese); });
     connect(ui->actionEnglish, &QAction::triggered, this,
             [this] { onActionSwitchLanguage(QLocale::English); });
 
