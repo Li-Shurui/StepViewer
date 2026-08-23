@@ -61,16 +61,22 @@ private:
     void setScaleFactor(qreal scaleFactor);
     void doSetScaleFactor(qreal scaleFactor);
     void enableZoomActions();
+    void updateFrameUi(qint64 frameCount);
 
     QLabel *m_imageLabel = nullptr;
     QLabel *m_widthLabel = nullptr;
     QLabel *m_heightLabel = nullptr;
     QLabel *m_formatLabel = nullptr;
+    QLabel *m_frameLabel = nullptr;
+    QLabel *m_frameCountLabel = nullptr;
     QComboBox *m_formatComboBox = nullptr;
     QSpinBox *m_widthSpinBox = nullptr;
     QSpinBox *m_heightSpinBox = nullptr;
+    QSpinBox *m_frameSpinBox = nullptr;
     QTableWidget *m_infoTable = nullptr;
     QAction *m_reloadAction = nullptr;
+    QAction *m_prevFrameAction = nullptr;
+    QAction *m_nextFrameAction = nullptr;
     QAction *m_zoomInAction = nullptr;
     QAction *m_zoomOutAction = nullptr;
     QAction *m_resetZoomAction = nullptr;
@@ -81,6 +87,7 @@ private:
     int m_fileStride = 0;
     int m_fileScanline = 0;
     QString m_metadataError;
+    qint64 m_frameCount = 1;
     qreal m_scaleFactor = 1;
     qreal m_initialScaleFactor = 1;
     qreal m_minScaleFactor = 1;

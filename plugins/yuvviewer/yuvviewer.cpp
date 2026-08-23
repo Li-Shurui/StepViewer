@@ -22,11 +22,13 @@
 #include <QLocale>
 #include <QPixmap>
 #include <QRegularExpression>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QToolBar>
 
+#include <climits>
 #include <expected>
 #include <limits>
 #include <optional>
@@ -114,10 +116,23 @@ OptionalLayoutResult layoutFromFileName(const QString &fileName, const RawImageD
         return std::unexpected(layout.error());
     return std::optional<RawImageLayout>(*layout);
 }
+
+// Number of whole frames of the given layout in a file of fileSize bytes;
+// 0 if the file size is not a positive multiple of the frame size.
+qint64 frameCount(const RawImageDecoder &decoder, const RawImageLayout &layout,
+                  qint64 fileSize)
+{
+    const qint64 frameSize = decoder.expectedByteSize(layout);
+    if (frameSize <= 0 || fileSize < frameSize || (fileSize % frameSize) != 0)
+        return 0;
+    return fileSize / frameSize;
+}
 }
 
 YuvViewer::YuvViewer()
     : m_reloadAction(new QAction(this)),
+      m_prevFrameAction(new QAction(this)),
+      m_nextFrameAction(new QAction(this)),
       m_zoomInAction(new QAction(this)),
       m_zoomOutAction(new QAction(this)),
       m_resetZoomAction(new QAction(this))
@@ -134,6 +149,20 @@ YuvViewer::YuvViewer()
     m_reloadAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_R));
     connect(m_reloadAction, &QAction::triggered, this, &YuvViewer::reload);
 
+    m_prevFrameAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::GoPrevious));
+    m_prevFrameAction->setShortcut(QKeySequence(Qt::Key_PageUp));
+    connect(m_prevFrameAction, &QAction::triggered, this, [this] {
+        if (m_frameSpinBox)
+            m_frameSpinBox->stepDown();
+    });
+
+    m_nextFrameAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::GoNext));
+    m_nextFrameAction->setShortcut(QKeySequence(Qt::Key_PageDown));
+    connect(m_nextFrameAction, &QAction::triggered, this, [this] {
+        if (m_frameSpinBox)
+            m_frameSpinBox->stepUp();
+    });
+
     m_zoomInAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::ZoomIn));
     m_zoomInAction->setShortcut(QKeySequence::ZoomIn);
     connect(m_zoomInAction, &QAction::triggered, this, &YuvViewer::zoomIn);
@@ -146,6 +175,8 @@ YuvViewer::YuvViewer()
     m_resetZoomAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_0));
     connect(m_resetZoomAction, &QAction::triggered, this, &YuvViewer::resetZoom);
 
+    m_prevFrameAction->setEnabled(false);
+    m_nextFrameAction->setEnabled(false);
     m_zoomInAction->setEnabled(false);
     m_zoomOutAction->setEnabled(false);
     m_resetZoomAction->setEnabled(false);
@@ -188,12 +219,25 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
     m_formatComboBox->setCurrentIndex(RawImageDecoders::all().indexOf(m_decoder));
     connect(m_formatComboBox, &QComboBox::activated, this, &YuvViewer::onFormatChanged);
 
+    m_frameLabel = new QLabel(toolBar);
+    m_frameSpinBox = new QSpinBox(toolBar);
+    m_frameSpinBox->setRange(1, 1);
+    m_frameSpinBox->setKeyboardTracking(false);
+    m_frameSpinBox->setEnabled(false);
+    connect(m_frameSpinBox, &QSpinBox::valueChanged, this, &YuvViewer::reload);
+    m_frameCountLabel = new QLabel(toolBar);
+
     toolBar->addWidget(m_widthLabel);
     toolBar->addWidget(m_widthSpinBox);
     toolBar->addWidget(m_heightLabel);
     toolBar->addWidget(m_heightSpinBox);
     toolBar->addWidget(m_formatLabel);
     toolBar->addWidget(m_formatComboBox);
+    toolBar->addWidget(m_frameLabel);
+    toolBar->addWidget(m_frameSpinBox);
+    toolBar->addWidget(m_frameCountLabel);
+    toolBar->addAction(m_prevFrameAction);
+    toolBar->addAction(m_nextFrameAction);
     toolBar->addAction(m_reloadAction);
     toolBar->addSeparator();
     toolBar->addAction(m_zoomInAction);
@@ -256,6 +300,7 @@ QByteArray YuvViewer::saveState() const
     stream << m_widthSpinBox->value();
     stream << m_heightSpinBox->value();
     stream << (m_decoder ? QString(m_decoder->id()) : QString());
+    stream << (m_frameSpinBox ? m_frameSpinBox->value() : 1);
     return state;
 }
 
@@ -286,10 +331,23 @@ bool YuvViewer::restoreState(QByteArray &state)
         }
     }
 
+    // States saved before multi-frame support end after the format id.
+    int frame = 1;
+    if (!stream.atEnd())
+        stream >> frame;
+    if (m_frameSpinBox) {
+        const QSignalBlocker blocker(m_frameSpinBox);
+        m_frameSpinBox->setValue(qMax(1, frame));
+    }
+
     if (!m_hasFileLayout && m_metadataError.isEmpty()
         && m_widthSpinBox && m_heightSpinBox) {
         m_widthSpinBox->setValue(width);
         m_heightSpinBox->setValue(height);
+        reload();
+    } else if (m_hasFileLayout && frame > 1) {
+        // The initial reload in setupYuvUi() ran before the state was
+        // restored; reload again at the restored frame.
         reload();
     }
     return true;
@@ -348,14 +406,21 @@ void YuvViewer::reload()
     const RawImageDecoder *decoder = m_decoder;
     const QString formatName = decoder->displayName();
 
+    // A file holding a whole number of frames enables frame navigation.
+    // A size mismatch is not rejected here: readData() reports it with
+    // full layout details.
+    const qint64 frames = frameCount(*decoder, loadLayout, QFileInfo(fileName).size());
+    updateFrameUi(frames);
+    const qint64 frameIndex = frames > 0 ? qMin<qint64>(m_frameSpinBox->value() - 1, frames - 1) : 0;
+
     m_imageLabel->setText(tr("Loading..."));
     m_imageLabel->setWordWrap(true);
 
     startAsyncTaskWithProgress<RawImageDecoder::ImageResult>(
-        [fileName, loadLayout, decoder](QPromise<RawImageDecoder::ImageResult> &promise) {
+        [fileName, loadLayout, decoder, frameIndex](QPromise<RawImageDecoder::ImageResult> &promise) {
             using ImageResult = RawImageDecoder::ImageResult;
             promise.setProgressRange(0, 100);
-            auto data = decoder->readData(fileName, loadLayout,
+            auto data = decoder->readData(fileName, loadLayout, frameIndex,
                                           [&promise](qint64 done, qint64 total) {
                 promise.setProgressValue(total > 0 ? int(done * 100 / total) : 0);
                 return !promise.isCanceled();
@@ -369,21 +434,47 @@ void YuvViewer::reload()
         [this](int value) {
             statusMessage(tr("Loading... %1%").arg(value), tr("open"), 0);
         },
-        [this, fileName, loadLayout, formatName, decoder](RawImageDecoder::ImageResult result) {
+        [this, fileName, loadLayout, formatName, decoder, frameIndex](RawImageDecoder::ImageResult result) {
             if (!result) {
                 reportError(result.error());
                 return;
             }
             displayImage(*result);
             updateInfoTab(fileName, loadLayout, decoder);
-            statusMessage(tr("Opened \"%1\", %2x%3, %4 (stride=%5, scanline=%6).")
-                              .arg(QDir::toNativeSeparators(fileName))
-                              .arg(loadLayout.width)
-                              .arg(loadLayout.height)
-                              .arg(formatName)
-                              .arg(loadLayout.stride)
-                              .arg(loadLayout.scanline));
+            const QString fileDescription = tr("\"%1\", %2x%3, %4 (stride=%5, scanline=%6)")
+                                                .arg(QDir::toNativeSeparators(fileName))
+                                                .arg(loadLayout.width)
+                                                .arg(loadLayout.height)
+                                                .arg(formatName)
+                                                .arg(loadLayout.stride)
+                                                .arg(loadLayout.scanline);
+            if (m_frameCount > 1) {
+                statusMessage(tr("Opened %1, frame %2/%3.")
+                                  .arg(fileDescription)
+                                  .arg(frameIndex + 1)
+                                  .arg(m_frameCount));
+            } else {
+                statusMessage(tr("Opened %1.").arg(fileDescription));
+            }
         });
+}
+
+void YuvViewer::updateFrameUi(qint64 frameCount)
+{
+    m_frameCount = qMax<qint64>(frameCount, 1);
+    if (!m_frameSpinBox)
+        return;
+
+    const QSignalBlocker blocker(m_frameSpinBox);
+    m_frameSpinBox->setMaximum(m_frameCount > INT_MAX ? INT_MAX : int(m_frameCount));
+    if (m_frameSpinBox->value() > m_frameSpinBox->maximum())
+        m_frameSpinBox->setValue(m_frameSpinBox->maximum());
+
+    const bool navigable = m_frameCount > 1;
+    m_frameSpinBox->setEnabled(navigable);
+    m_prevFrameAction->setEnabled(navigable);
+    m_nextFrameAction->setEnabled(navigable);
+    m_frameCountLabel->setText(QStringLiteral("/ %1").arg(m_frameCount));
 }
 
 void YuvViewer::cleanup()
@@ -482,7 +573,9 @@ void YuvViewer::updateInfoTab(const QString &fileName, const RawImageLayout &lay
     addRow(tr("Scanline"), tr("%1 lines").arg(layout.scanline));
     addRow(tr("Y plane size"),
            locale.formattedDataSize(qint64(layout.stride) * layout.scanline));
-    addRow(tr("File size"), locale.formattedDataSize(decoder->expectedByteSize(layout)));
+    addRow(tr("Frame size"), locale.formattedDataSize(decoder->expectedByteSize(layout)));
+    addRow(tr("File size"), locale.formattedDataSize(QFileInfo(fileName).size()));
+    addRow(tr("Frames"), locale.toString(m_frameCount));
 }
 
 void YuvViewer::reportError(const QString &message)
@@ -546,9 +639,12 @@ void YuvViewer::retranslate()
     m_widthLabel->setText(tr("Width:"));
     m_heightLabel->setText(tr("Height:"));
     m_formatLabel->setText(tr("Format:"));
+    m_frameLabel->setText(tr("Frame:"));
     m_widthSpinBox->setSuffix(tr(" px"));
     m_heightSpinBox->setSuffix(tr(" px"));
     m_reloadAction->setText(tr("&Reload"));
+    m_prevFrameAction->setText(tr("Previous Frame"));
+    m_nextFrameAction->setText(tr("Next Frame"));
     m_zoomInAction->setText(tr("Zoom &In"));
     m_zoomOutAction->setText(tr("Zoom &Out"));
     m_resetZoomAction->setText(tr("Reset Zoom"));

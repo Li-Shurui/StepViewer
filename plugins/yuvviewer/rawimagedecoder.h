@@ -65,15 +65,22 @@ public:
                                        const RawImageLayout &layout) const = 0;
 
     // Shared file loading, size-checked against expectedByteSize().
+    // A file whose size is a multiple of the frame size is treated as a
+    // multi-frame sequence; frameIndex selects which frame to read.
     // The progress variant reports bytesRead/totalBytes after each chunk;
     // the callback returns false to abort the read (cooperative cancel).
     using ProgressCallback = std::function<bool(qint64 bytesRead, qint64 totalBytes)>;
     DataResult readData(const QString &fileName, const RawImageLayout &layout) const
     {
-        return readData(fileName, layout, {});
+        return readData(fileName, layout, 0, {});
     }
     DataResult readData(const QString &fileName, const RawImageLayout &layout,
-                        const ProgressCallback &progress) const;
+                        const ProgressCallback &progress) const
+    {
+        return readData(fileName, layout, 0, progress);
+    }
+    DataResult readData(const QString &fileName, const RawImageLayout &layout,
+                        qint64 frameIndex, const ProgressCallback &progress) const;
 };
 
 namespace RawImageDecoders {
