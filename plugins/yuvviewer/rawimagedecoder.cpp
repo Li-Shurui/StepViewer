@@ -28,6 +28,11 @@ RawImageDecoder::LayoutResult RawImageDecoder::validateLayout(const RawImageLayo
     return layout;
 }
 
+int RawImageDecoder::defaultStride(int width) const
+{
+    return width;
+}
+
 RawImageDecoder::DataResult RawImageDecoder::readData(const QString &fileName,
                                                       const RawImageLayout &layout,
                                                       const ProgressCallback &progress) const
@@ -310,6 +315,81 @@ protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_YV12; }
 };
 
+// Shared implementation for packed (interleaved) YUV 4:2:2 formats:
+// a single plane of two-pixel macropixels, four bytes each. Only the
+// component order inside the macropixel (YUYV, UYVY, YVYU) differs.
+class PackedYuv422Decoder : public RawImageDecoder
+{
+public:
+    LayoutResult validateLayout(const RawImageLayout &layout) const override
+    {
+        const LayoutResult baseResult = RawImageDecoder::validateLayout(layout);
+        if (!baseResult)
+            return baseResult;
+
+        if ((layout.width % 2) != 0) {
+            return std::unexpected(tr("%1 width must be even. Received %2.")
+                                       .arg(displayName())
+                                       .arg(layout.width));
+        }
+        if (layout.stride < layout.width * 2) {
+            return std::unexpected(tr("%1 stride must be at least twice the width. "
+                                      "Received width %2, stride %3.")
+                                       .arg(displayName())
+                                       .arg(layout.width)
+                                       .arg(layout.stride));
+        }
+        if (layout.scanline < layout.height) {
+            return std::unexpected(tr("%1 scanline must be at least the height. "
+                                      "Received height %2, scanline %3.")
+                                       .arg(displayName())
+                                       .arg(layout.height)
+                                       .arg(layout.scanline));
+        }
+
+        return layout;
+    }
+
+    qint64 expectedByteSize(const RawImageLayout &layout) const override
+    {
+        return qint64(layout.stride) * qint64(layout.scanline) * 2;
+    }
+
+    int defaultStride(int width) const override { return width * 2; }
+
+    ImageResult convertToImage(const QByteArray &data,
+                               const RawImageLayout &layout) const override
+    {
+        return runConversion(*this, [&]() -> ImageResult {
+            auto *pixels = reinterpret_cast<uchar *>(const_cast<char *>(data.constData()));
+            cv::Mat yuv(layout.height, layout.width, CV_8UC2, pixels,
+                        static_cast<size_t>(layout.stride));
+            cv::Mat rgba;
+            cv::cvtColor(yuv, rgba, conversionCode());
+            return rgbaMatToImage(rgba, layout);
+        });
+    }
+
+protected:
+    // cv::COLOR_YUV2RGBA_YUY2 / cv::COLOR_YUV2RGBA_UYVY / ...
+    virtual int conversionCode() const = 0;
+};
+
+class Yuy2Decoder final : public PackedYuv422Decoder
+{
+public:
+    QLatin1StringView id() const override { return "yuy2"_L1; }
+    QString displayName() const override { return QStringLiteral("YUY2"); }
+    QString mimeType() const override { return "video/x-raw-yuy2"_L1; }
+    QStringList fileExtensions() const override
+    {
+        return {"yuy2"_L1, "YUY2"_L1, "yuyv"_L1, "YUYV"_L1};
+    }
+
+protected:
+    int conversionCode() const override { return cv::COLOR_YUV2RGBA_YUY2; }
+};
+
 // Single-plane 8-bit grayscale: Y samples only, no chroma, so no
 // subsampling alignment constraints apply.
 class Y8Decoder final : public RawImageDecoder
@@ -375,6 +455,7 @@ const QList<const RawImageDecoder *> &all()
         new Nv21Decoder,
         new I420Decoder,
         new Yv12Decoder,
+        new Yuy2Decoder,
         new Y8Decoder,
     };
     return decoders;

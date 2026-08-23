@@ -69,7 +69,7 @@ OptionalLayoutResult layoutFromFileName(const QString &fileName, const RawImageD
             return std::unexpected(height.error());
 
         const auto stride = taggedMatch.captured(3).isEmpty()
-            ? std::expected<int, QString>(*width)
+            ? std::expected<int, QString>(decoder.defaultStride(*width))
             : capturedInteger(taggedMatch, 3, YuvViewer::tr("stride"));
         if (!stride)
             return std::unexpected(stride.error());
@@ -108,7 +108,8 @@ OptionalLayoutResult layoutFromFileName(const QString &fileName, const RawImageD
     if (!height)
         return std::unexpected(height.error());
 
-    const auto layout = decoder.validateLayout({*width, *height, *width, *height});
+    const auto layout = decoder.validateLayout(
+        {*width, *height, decoder.defaultStride(*width), *height});
     if (!layout)
         return std::unexpected(layout.error());
     return std::optional<RawImageLayout>(*layout);
@@ -326,7 +327,7 @@ void YuvViewer::reload()
 
     const int width = m_widthSpinBox->value();
     const int height = m_heightSpinBox->value();
-    RawImageLayout requestedLayout{width, height, width, height};
+    RawImageLayout requestedLayout{width, height, m_decoder->defaultStride(width), height};
     if (m_hasFileLayout && width == m_fileWidth && height == m_fileHeight) {
         requestedLayout.stride = m_fileStride;
         requestedLayout.scanline = m_fileScanline;
