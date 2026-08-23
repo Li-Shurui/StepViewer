@@ -68,6 +68,7 @@ private:
     void enableZoomActions();
     void updateFrameUi(qint64 frameCount);
     void updatePlaneCombo();
+    void updateFormatMatches();
     int currentPlane() const;
     QPoint compositePosition(QPoint widgetPos) const;
 

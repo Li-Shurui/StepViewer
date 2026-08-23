@@ -239,35 +239,35 @@
         <translation>文件名中的图像元数据不完整。预期为 &quot;_w[width]_h[height]_stride[stride]_scanline[scanline]&quot;。</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="539"/>
-        <location filename="yuvviewer.cpp" line="951"/>
+        <location filename="yuvviewer.cpp" line="543"/>
+        <location filename="yuvviewer.cpp" line="995"/>
         <source>Info</source>
         <translation>信息</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="546"/>
+        <location filename="yuvviewer.cpp" line="550"/>
         <source>Enter the image width and height, then select Reload.</source>
         <translation>请输入图像宽度和高度，然后选择“重新加载”。</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="553"/>
-        <location filename="yuvviewer.cpp" line="619"/>
-        <location filename="yuvviewer.cpp" line="870"/>
+        <location filename="yuvviewer.cpp" line="557"/>
+        <location filename="yuvviewer.cpp" line="623"/>
+        <location filename="yuvviewer.cpp" line="914"/>
         <source>open</source>
         <translation>打开</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="564"/>
+        <location filename="yuvviewer.cpp" line="568"/>
         <source>The YUV viewer is not fully initialized.</source>
         <translation>YUV 查看器尚未完全初始化。</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="597"/>
+        <location filename="yuvviewer.cpp" line="601"/>
         <source>Loading...</source>
         <translation>正在加载...</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="619"/>
+        <location filename="yuvviewer.cpp" line="623"/>
         <source>Loading... %1%</source>
         <translation>正在加载... %1%</translation>
     </message>
@@ -276,187 +276,192 @@
         <translation type="vanished">已打开 &quot;%1&quot;，%2x%3，%4（stride=%5，scanline=%6）。</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="632"/>
+        <location filename="yuvviewer.cpp" line="636"/>
         <source>&quot;%1&quot;, %2x%3, %4 (stride=%5, scanline=%6)</source>
         <translation>“%1”，%2x%3，%4（stride=%5，scanline=%6）</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="640"/>
+        <location filename="yuvviewer.cpp" line="644"/>
         <source>Opened %1, frame %2/%3.</source>
         <translation>已打开 %1，第 %2/%3 帧。</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="645"/>
+        <location filename="yuvviewer.cpp" line="649"/>
         <source>Opened %1.</source>
         <translation>已打开 %1。</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="701"/>
-        <location filename="yuvviewer.cpp" line="935"/>
+        <location filename="yuvviewer.cpp" line="705"/>
+        <location filename="yuvviewer.cpp" line="979"/>
         <source>Composite</source>
         <translation>合成图像</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="798"/>
+        <location filename="yuvviewer.cpp" line="750"/>
+        <source>Matches the file size: %1 bytes per frame, %2 frames.</source>
+        <translation>匹配文件大小：每帧 %1 字节，共 %2 帧。</translation>
+    </message>
+    <message>
+        <location filename="yuvviewer.cpp" line="842"/>
         <source>File</source>
         <translation>文件</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="799"/>
+        <location filename="yuvviewer.cpp" line="843"/>
         <source>Format</source>
         <translation>格式</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="800"/>
+        <location filename="yuvviewer.cpp" line="844"/>
         <source>Width</source>
         <translation>宽度</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="800"/>
-        <location filename="yuvviewer.cpp" line="801"/>
+        <location filename="yuvviewer.cpp" line="844"/>
+        <location filename="yuvviewer.cpp" line="845"/>
         <source>%1 px</source>
         <translation>%1 像素</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="801"/>
+        <location filename="yuvviewer.cpp" line="845"/>
         <source>Height</source>
         <translation>高度</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="802"/>
+        <location filename="yuvviewer.cpp" line="846"/>
         <source>Stride</source>
         <translation>Stride</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="802"/>
+        <location filename="yuvviewer.cpp" line="846"/>
         <source>%1 bytes</source>
         <translation>%1 字节</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="803"/>
+        <location filename="yuvviewer.cpp" line="847"/>
         <source>Scanline</source>
         <translation>Scanline</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="803"/>
+        <location filename="yuvviewer.cpp" line="847"/>
         <source>%1 lines</source>
         <translation>%1 行</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="804"/>
+        <location filename="yuvviewer.cpp" line="848"/>
         <source>Y plane size</source>
         <translation>Y 平面大小</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="806"/>
+        <location filename="yuvviewer.cpp" line="850"/>
         <source>Frame size</source>
         <translation>帧大小</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="807"/>
+        <location filename="yuvviewer.cpp" line="851"/>
         <source>File size</source>
         <translation>文件大小</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="808"/>
+        <location filename="yuvviewer.cpp" line="852"/>
         <source>Frames</source>
         <translation>帧数</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="839"/>
+        <location filename="yuvviewer.cpp" line="883"/>
         <source>(%1, %2)  %3</source>
         <translation>(%1, %2)  %3</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="844"/>
+        <location filename="yuvviewer.cpp" line="888"/>
         <source>probe</source>
         <translation>探针</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="863"/>
+        <location filename="yuvviewer.cpp" line="907"/>
         <source>
 File: %1</source>
         <translation>
 文件：%1</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="928"/>
+        <location filename="yuvviewer.cpp" line="972"/>
         <source>YUV Image</source>
         <translation>YUV 图像</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="929"/>
+        <location filename="yuvviewer.cpp" line="973"/>
         <source>Width:</source>
         <translation>宽度：</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="930"/>
+        <location filename="yuvviewer.cpp" line="974"/>
         <source>Height:</source>
         <translation>高度：</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="931"/>
+        <location filename="yuvviewer.cpp" line="975"/>
         <source>Format:</source>
         <translation>格式：</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="932"/>
+        <location filename="yuvviewer.cpp" line="976"/>
         <source>Frame:</source>
         <translation>帧:</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="933"/>
+        <location filename="yuvviewer.cpp" line="977"/>
         <source>Plane:</source>
         <translation>平面:</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="936"/>
-        <location filename="yuvviewer.cpp" line="937"/>
+        <location filename="yuvviewer.cpp" line="980"/>
+        <location filename="yuvviewer.cpp" line="981"/>
         <source> px</source>
         <translation> 像素</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="938"/>
+        <location filename="yuvviewer.cpp" line="982"/>
         <source>&amp;Reload</source>
         <translation>重新加载(&amp;R)</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="939"/>
+        <location filename="yuvviewer.cpp" line="983"/>
         <source>Previous Frame</source>
         <translation>上一帧</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="940"/>
+        <location filename="yuvviewer.cpp" line="984"/>
         <source>Next Frame</source>
         <translation>下一帧</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="941"/>
+        <location filename="yuvviewer.cpp" line="985"/>
         <source>Zoom &amp;In</source>
         <translation>放大(&amp;I)</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="942"/>
+        <location filename="yuvviewer.cpp" line="986"/>
         <source>Zoom &amp;Out</source>
         <translation>缩小(&amp;O)</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="943"/>
+        <location filename="yuvviewer.cpp" line="987"/>
         <source>Reset Zoom</source>
         <translation>重置缩放</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="944"/>
+        <location filename="yuvviewer.cpp" line="988"/>
         <source>&amp;Fit to Window</source>
         <translation>适应窗口(&amp;F)</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="945"/>
+        <location filename="yuvviewer.cpp" line="989"/>
         <source>&amp;Smooth Scaling</source>
         <translation>平滑缩放(&amp;S)</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="946"/>
+        <location filename="yuvviewer.cpp" line="990"/>
         <source>Pixel &amp;Grid</source>
         <translation>像素网格(&amp;G)</translation>
     </message>
