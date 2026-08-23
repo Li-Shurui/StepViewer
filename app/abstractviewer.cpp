@@ -94,6 +94,42 @@ void AbstractViewer::busyChanged(bool busy)
 #endif
 }
 
+std::expected<QByteArray, QString> AbstractViewer::readFileChunked(
+        const QString &fileName, const ReadProgressCallback &progress)
+{
+    QFile file(fileName);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return std::unexpected(tr("Cannot open the file: %1")
+                                   .arg(file.errorString()));
+    }
+
+    constexpr qint64 chunkSize = 4 * 1024 * 1024;
+    const qint64 total = file.size();
+    QByteArray data(total, Qt::Uninitialized);
+    qint64 offset = 0;
+    while (offset < total) {
+        const qint64 bytesRead = file.read(data.data() + offset,
+                                           qMin(chunkSize, total - offset));
+        if (bytesRead < 0) {
+            return std::unexpected(tr("Failed while reading the file: %1")
+                                       .arg(file.errorString()));
+        }
+        if (bytesRead == 0)
+            break;  // the file shrank mid-read; reported below
+        offset += bytesRead;
+        if (progress && !progress(offset, total))
+            return std::unexpected(tr("Loading canceled."));
+    }
+
+    if (offset != total) {
+        return std::unexpected(tr("The file read was incomplete. "
+                                  "Expected %1 bytes, received %2 bytes.")
+                                   .arg(total)
+                                   .arg(offset));
+    }
+    return data;
+}
+
 void AbstractViewer::setTranslationBaseName(const QString &baseName)
 {
     m_translator.reset(new Translator);

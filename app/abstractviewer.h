@@ -15,6 +15,7 @@
 #include <QMenuBar>
 #include <QObject>
 #include <QPrinter>
+#include <QPromise>
 #include <QScrollArea>
 #include <QStatusBar>
 #include <QTabWidget>
@@ -22,6 +23,7 @@
 #include <QtCompilerDetection>
 #include <QtConcurrentRun>
 
+#include <expected>
 #include <functional>
 #include <type_traits>
 #include <utility>
@@ -104,10 +106,24 @@ protected:
     template <typename Work, typename Done>
     void startAsyncTask(Work &&work, Done &&done);
 
+    // Variant for tasks with progress reporting: work must take a
+    // QPromise<Result> & as first parameter, return void, and deliver its
+    // result via QPromise::addResult() (QtConcurrent promise-mode rules).
+    // progress is invoked on the UI thread with the latest progress value.
+    template <typename Result, typename Work, typename Progress, typename Done>
+    void startAsyncTaskWithProgress(Work &&work, Progress &&progress, Done &&done);
+
     // Invalidates the results of all pending tasks and requests their
     // cancellation. Cancellation is cooperative: tasks poll
     // QPromise::isCanceled() to actually stop early.
     void cancelAsyncTasks();
+
+    // Reads a whole file in chunks, invoking progress(bytesRead, totalBytes)
+    // after each chunk; the callback returns false to abort the read.
+    // Suitable for worker threads; opens its own QFile.
+    using ReadProgressCallback = std::function<bool(qint64 bytesRead, qint64 totalBytes)>;
+    static std::expected<QByteArray, QString> readFileChunked(const QString &fileName,
+                                                              const ReadProgressCallback &progress);
 
     // Called on the UI thread when the number of running async tasks changes
     // between zero and non-zero. The base implementation toggles a busy
@@ -140,10 +156,11 @@ private:
     std::unique_ptr<Translator> m_translator;
 };
 
-template <typename Work, typename Done>
-void AbstractViewer::startAsyncTask(Work &&work, Done &&done)
+template <typename Result, typename Work, typename Progress, typename Done>
+void AbstractViewer::startAsyncTaskWithProgress(Work &&work, Progress &&progress, Done &&done)
 {
-    using Result = std::invoke_result_t<std::decay_t<Work>>;
+    static_assert(std::is_invocable_v<std::decay_t<Work>, QPromise<Result> &>,
+                  "work must be callable as void(QPromise<Result> &)");
 
     auto *watcher = new QFutureWatcher<Result>(this);
     const quint64 generation = ++m_taskGeneration;
@@ -164,8 +181,27 @@ void AbstractViewer::startAsyncTask(Work &&work, Done &&done)
                     return;  // superseded or canceled: discard the result
                 done(future.takeResult());
             });
+    connect(watcher, &QFutureWatcherBase::progressValueChanged, this,
+            [this, generation,
+             progress = std::forward<Progress>(progress)](int value) mutable {
+                if (generation == m_taskGeneration)
+                    progress(value);
+            });
 
     watcher->setFuture(future);
+}
+
+template <typename Work, typename Done>
+void AbstractViewer::startAsyncTask(Work &&work, Done &&done)
+{
+    using Result = std::invoke_result_t<std::decay_t<Work>>;
+
+    startAsyncTaskWithProgress<Result>(
+        [work = std::forward<Work>(work)](QPromise<Result> &promise) mutable {
+            promise.addResult(work());
+        },
+        [](int) { },
+        std::forward<Done>(done));
 }
 
 #endif // ABSTRACTVIEWER_H

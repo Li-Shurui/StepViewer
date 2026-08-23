@@ -8,6 +8,7 @@
 #include <QMainWindow>
 #include <QToolBar>
 
+#include <QBuffer>
 #include <QColorSpace>
 #include <QIcon>
 #include <QImageReader>
@@ -136,14 +137,29 @@ void ImageViewer::openFile()
 {
     const QString name = m_file->fileName();
 
-    // QImageReader is not a QObject and is safe to use on a worker thread;
+    // The file is read in chunks (with progress) and decoded from memory on
+    // a worker thread; QImageReader is not a QObject and is safe off-thread.
     // QPixmap conversion stays on the UI thread in the completion callback.
-    startAsyncTask(
-        [name]() -> LoadResult {
-            QImageReader reader(name);
+    startAsyncTaskWithProgress<LoadResult>(
+        [name](QPromise<LoadResult> &promise) {
+            promise.setProgressRange(0, 100);
+            auto bytes = readFileChunked(name, [&promise](qint64 done, qint64 total) {
+                promise.setProgressValue(total > 0 ? int(done * 100 / total) : 0);
+                return !promise.isCanceled();
+            });
+            if (!bytes) {
+                promise.addResult(LoadResult(std::unexpected(bytes.error())));
+                return;
+            }
+
+            QBuffer buffer(&*bytes);
+            buffer.open(QIODevice::ReadOnly);
+            QImageReader reader(&buffer);
             QImage image = reader.read();
-            if (image.isNull())
-                return std::unexpected(reader.errorString());
+            if (image.isNull()) {
+                promise.addResult(LoadResult(std::unexpected(reader.errorString())));
+                return;
+            }
 
             LoadedImage loaded;
             if (image.colorSpace().isValid()) {
@@ -152,7 +168,10 @@ void ImageViewer::openFile()
             } else {
                 loaded.image = std::move(image);
             }
-            return loaded;
+            promise.addResult(LoadResult(std::move(loaded)));
+        },
+        [this](int value) {
+            statusMessage(tr("Loading... %1%").arg(value), tr("open"), 0);
         },
         [this, name](LoadResult result) {
             if (!result) {

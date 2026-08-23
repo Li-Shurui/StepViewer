@@ -310,6 +310,9 @@ void YuvViewer::setupYuvUi()
 void YuvViewer::reload()
 {
     clear();
+    // A new reload supersedes a pending load; cancellation lets the worker
+    // abort its read early instead of running to completion.
+    cancelAsyncTasks();
 
     if (!m_file || !m_widthSpinBox || !m_heightSpinBox || !m_decoder) {
         reportError(tr("The YUV viewer is not fully initialized."));
@@ -340,12 +343,23 @@ void YuvViewer::reload()
     m_imageLabel->setText(tr("Loading..."));
     m_imageLabel->setWordWrap(true);
 
-    startAsyncTask(
-        [fileName, loadLayout, decoder]() -> RawImageDecoder::ImageResult {
-            auto data = decoder->readData(fileName, loadLayout);
-            if (!data)
-                return std::unexpected(data.error());
-            return decoder->convertToImage(*data, loadLayout);
+    startAsyncTaskWithProgress<RawImageDecoder::ImageResult>(
+        [fileName, loadLayout, decoder](QPromise<RawImageDecoder::ImageResult> &promise) {
+            using ImageResult = RawImageDecoder::ImageResult;
+            promise.setProgressRange(0, 100);
+            auto data = decoder->readData(fileName, loadLayout,
+                                          [&promise](qint64 done, qint64 total) {
+                promise.setProgressValue(total > 0 ? int(done * 100 / total) : 0);
+                return !promise.isCanceled();
+            });
+            if (!data) {
+                promise.addResult(ImageResult(std::unexpected(data.error())));
+                return;
+            }
+            promise.addResult(decoder->convertToImage(*data, loadLayout));
+        },
+        [this](int value) {
+            statusMessage(tr("Loading... %1%").arg(value), tr("open"), 0);
         },
         [this, fileName, loadLayout, formatName](RawImageDecoder::ImageResult result) {
             if (!result) {
