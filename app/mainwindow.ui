@@ -11,11 +11,11 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Document Viewer Demo</string>
+   <string>StepViewer</string>
   </property>
   <property name="windowIcon">
    <iconset resource="documentviewer.qrc">
-    <normaloff>:/demos/documentviewer/images/qt-logo.png</normaloff>:/demos/documentviewer/images/qt-logo.png</iconset>
+    <normaloff>:/demos/documentviewer/images/stepviewer.png</normaloff>:/demos/documentviewer/images/stepviewer.png</iconset>
   </property>
   <widget class="QWidget" name="centralwidget">
    <property name="enabled">
@@ -153,10 +153,10 @@
     <iconset theme="QIcon::ThemeIcon::HelpAbout"/>
    </property>
    <property name="text">
-    <string>About Document Viewer</string>
+    <string>About StepViewer</string>
    </property>
    <property name="toolTip">
-    <string>Show information about the Document Viewer deomo.</string>
+    <string>Show information about StepViewer.</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+H</string>

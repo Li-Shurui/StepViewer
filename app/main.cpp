@@ -6,6 +6,7 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QIcon>
 #include <QMessageBox>
 
 using namespace Qt::StringLiterals;
@@ -17,9 +18,10 @@ struct Tr {
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
-    QCoreApplication::setOrganizationName("QtProject"_L1);
-    QCoreApplication::setApplicationName("DocumentViewer"_L1);
+    QCoreApplication::setOrganizationName("StepViewer"_L1);
+    QCoreApplication::setApplicationName("StepViewer"_L1);
     QCoreApplication::setApplicationVersion("1.0"_L1);
+    QApplication::setWindowIcon(QIcon(":/demos/documentviewer/images/stepviewer.png"_L1));
 
     // Start in English regardless of the system language. All translators
     // (application and plugins) resolve the default-constructed QLocale;
@@ -31,7 +33,7 @@ int main(int argc, char *argv[])
     mainTranslator.install();
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(Tr::tr("A viewer for JSON, PDF and text files"));
+    parser.setApplicationDescription(Tr::tr("StepViewer: a plugin-based viewer for images, YUV, JSON and text files"));
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addPositionalArgument("File"_L1, Tr::tr("JSON, PDF or text file to open"));

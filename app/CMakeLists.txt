@@ -36,10 +36,17 @@ if(TARGET Qt6::PrintSupport)
 endif()
 
 #
-# documentviewer library
+# StepViewer application
 #
 
-qt_add_executable(documentviewer
+if(WIN32)
+    # .gitignore excludes *.rc, so generate the Windows icon resource at configure time.
+    file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/images/stepviewer.ico" _stepviewer_ico)
+    set(app_icon_resource "${CMAKE_CURRENT_BINARY_DIR}/stepviewer.rc")
+    file(WRITE "${app_icon_resource}" "IDI_ICON1 ICON \"${_stepviewer_ico}\"\n")
+endif()
+
+qt_add_executable(stepviewer
     main.cpp
     mainwindow.cpp mainwindow.h mainwindow.ui
     viewerfactory.cpp viewerfactory.h
@@ -47,20 +54,22 @@ qt_add_executable(documentviewer
     recentfilemenu.cpp recentfilemenu.h
     viewerinterfaces.h
     documentviewer.qrc
+    ${app_icon_resource}
 )
 
-qt_add_translations(documentviewer
-    SOURCE_TARGETS documentviewer abstractviewer
+qt_add_translations(stepviewer
+    SOURCE_TARGETS stepviewer abstractviewer
     TS_FILE_BASE docviewer
     MERGE_QT_TRANSLATIONS
     QT_TRANSLATION_CATALOGS qtbase
 )
 
-set_target_properties(documentviewer PROPERTIES
+set_target_properties(stepviewer PROPERTIES
+    OUTPUT_NAME StepViewer
     WIN32_EXECUTABLE TRUE
 )
 
-target_link_libraries(documentviewer PRIVATE
+target_link_libraries(stepviewer PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
@@ -68,12 +77,12 @@ target_link_libraries(documentviewer PRIVATE
 )
 
 if (APPLE)
-    set_target_properties(documentviewer PROPERTIES
-        OUTPUT_NAME "Document Viewer"
+    set_target_properties(stepviewer PROPERTIES
+        OUTPUT_NAME "StepViewer"
         MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "Document Viewer"
+        MACOSX_BUNDLE_BUNDLE_NAME "StepViewer"
         MACOSX_BUNDLE_COPYRIGHT "Copyright (C) The Qt Company Ltd. and other contributors."
-        MACOSX_BUNDLE_GUI_IDENTIFIER "io.qt.examples.documentviewer"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "io.qt.examples.stepviewer"
         MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
         MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
     )
@@ -95,9 +104,9 @@ if(TARGET yuvviewer)
 endif()
 
 if(QT6_IS_SHARED_LIBS_BUILD)
-    add_dependencies(documentviewer ${plugin_targets})
+    add_dependencies(stepviewer ${plugin_targets})
 else()
-    target_link_libraries(documentviewer PRIVATE ${plugin_targets})
+    target_link_libraries(stepviewer PRIVATE ${plugin_targets})
 endif()
 
 #
@@ -105,8 +114,8 @@ endif()
 #
 
 if(APPLE)
-    set(INSTALL_LIBDIR "Document Viewer.app/Contents/Frameworks")
-    set(INSTALL_PLUGINSDIR "Document Viewer.app/Contents/PlugIns")
+    set(INSTALL_LIBDIR "StepViewer.app/Contents/Frameworks")
+    set(INSTALL_PLUGINSDIR "StepViewer.app/Contents/PlugIns")
 elseif(WIN32)
     set(INSTALL_BINDIR ${CMAKE_INSTALL_BINDIR})
     set(INSTALL_LIBDIR ${CMAKE_INSTALL_BINDIR})
@@ -117,7 +126,7 @@ else()
     set(INSTALL_PLUGINSDIR "plugins")
 endif()
 
-install(TARGETS documentviewer abstractviewer
+install(TARGETS stepviewer abstractviewer
     BUNDLE DESTINATION .
     RUNTIME DESTINATION "${INSTALL_BINDIR}"
     LIBRARY DESTINATION "${INSTALL_LIBDIR}"
@@ -129,7 +138,7 @@ install(TARGETS ${plugin_targets}
 
 # Install Qt libraries and plugins
 qt_generate_deploy_app_script(
-    TARGET documentviewer
+    TARGET stepviewer
     OUTPUT_SCRIPT deploy_script
     NO_UNSUPPORTED_PLATFORM_ERROR
     NO_TRANSLATIONS

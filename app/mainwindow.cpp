@@ -256,7 +256,7 @@ void MainWindow::onActionAboutTriggered()
     if (auto *def = m_factory->defaultViewer())
         text += tr("\n\nOther mime types will be displayed with %1.").arg(def->viewerName());
 
-    QMessageBox::about(this, tr("About Document Viewer Demo"), text);
+    QMessageBox::about(this, tr("About StepViewer"), text);
 }
 
 void MainWindow::onActionAboutQtTriggered()

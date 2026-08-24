@@ -83,8 +83,8 @@
     <name>MainWindow</name>
     <message>
         <location filename="mainwindow.ui" line="14"/>
-        <source>Document Viewer Demo</source>
-        <translation>文档查看器演示</translation>
+        <source>StepViewer</source>
+        <translation>StepViewer</translation>
     </message>
     <message>
         <location filename="mainwindow.ui" line="42"/>
@@ -128,13 +128,14 @@
     </message>
     <message>
         <location filename="mainwindow.ui" line="156"/>
-        <source>About Document Viewer</source>
-        <translation>关于文档查看器</translation>
+        <location filename="mainwindow.cpp" line="259"/>
+        <source>About StepViewer</source>
+        <translation>关于 StepViewer</translation>
     </message>
     <message>
         <location filename="mainwindow.ui" line="159"/>
-        <source>Show information about the Document Viewer deomo.</source>
-        <translation>显示关于文档查看器演示的信息。</translation>
+        <source>Show information about StepViewer.</source>
+        <translation>显示关于 StepViewer 的信息。</translation>
     </message>
     <message>
         <location filename="mainwindow.ui" line="162"/>
@@ -291,11 +292,6 @@ Other mime types will be displayed with %1.</source>
         <translation>
 
 其他 MIME 类型将使用 %1 显示。</translation>
-    </message>
-    <message>
-        <location filename="mainwindow.cpp" line="259"/>
-        <source>About Document Viewer Demo</source>
-        <translation>关于文档查看器演示</translation>
     </message>
 </context>
 <context>

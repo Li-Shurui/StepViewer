@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LicenseRef-Qt-Commercial OR BSD-3-Clause
 
 cmake_minimum_required(VERSION 3.16)
-project(DocumentViewer VERSION 1.0 LANGUAGES CXX)
+project(StepViewer VERSION 1.0 LANGUAGES CXX)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Concurrent LinguistTools
              OPTIONAL_COMPONENTS PrintSupport Quick3D)
