@@ -54,9 +54,8 @@ void AbstractViewer::init(QFile *file, QWidget *widget, QMainWindow *mainWindow)
 
 AbstractViewer::~AbstractViewer()
 {
-    // Async tasks may be executing code of a plugin library. Cancel them and
-    // wait for completion before the viewer (and potentially the plugin) is
-    // destroyed, so no worker thread outlives the code it runs.
+    // Destruction is the one point where worker code must be fully stopped:
+    // the viewer object and possibly its plugin library are about to vanish.
     cancelAsyncTasks();
     waitForAsyncTasks();
     AbstractViewer::cleanup();
@@ -322,6 +321,12 @@ QMenu *AbstractViewer::addMenu()
 
 void AbstractViewer::cleanup()
 {
+    // Invalidate callbacks for the previous file without blocking the UI.
+    // Viewer instances remain alive in ViewerFactory, and the generation
+    // check in startAsyncTaskWithProgress() discards these stale results.
+    // The destructor performs the blocking wait before the object is deleted.
+    cancelAsyncTasks();
+
     // delete all objects created by the viewer which need to be displayed
     // and therefore parented on MainWindow
     if (m_uiAssets.mainWindow)
