@@ -10,6 +10,8 @@
 
 #include <array>
 #include <cstring>
+#include <limits>
+#include <new>
 
 using namespace Qt::StringLiterals;
 
@@ -20,6 +22,9 @@ RawImageDecoder::LayoutResult RawImageDecoder::validateLayout(const RawImageLayo
         return std::unexpected(tr("Width and height must be between %1 and %2.")
                                    .arg(minimumDimension)
                                    .arg(maximumDimension));
+    }
+    if (layout.stride <= 0 || layout.scanline <= 0) {
+        return std::unexpected(tr("Stride and scanline must both be positive."));
     }
     if (layout.stride > maximumStride || layout.scanline > maximumDimension) {
         return std::unexpected(tr("Stride must not exceed %1 and scanline must not exceed %2.")
@@ -61,6 +66,14 @@ RawImageDecoder::DataResult RawImageDecoder::readData(const QString &fileName,
 
     const qint64 frameSize = expectedByteSize(layout);
     const qint64 fileSize = file.size();
+    if (frameSize <= 0) {
+        return std::unexpected(tr("The calculated %1 frame size is invalid.")
+                                   .arg(displayName()));
+    }
+    if (frameSize > std::numeric_limits<qsizetype>::max()) {
+        return std::unexpected(tr("The %1 frame is too large to load into memory.")
+                                   .arg(displayName()));
+    }
     if (fileSize < frameSize || (fileSize % frameSize) != 0) {
         return std::unexpected(
             tr("File size does not match whole %1 frames. "
@@ -88,7 +101,17 @@ RawImageDecoder::DataResult RawImageDecoder::readData(const QString &fileName,
     }
 
     constexpr qint64 chunkSize = 4 * 1024 * 1024;
-    QByteArray data(frameSize, Qt::Uninitialized);
+    QByteArray data;
+    try {
+        data = QByteArray(static_cast<qsizetype>(frameSize), Qt::Uninitialized);
+    } catch (const std::bad_alloc &) {
+        return std::unexpected(tr("Not enough memory to allocate %1 bytes for the image frame.")
+                                   .arg(frameSize));
+    }
+    if (data.size() != frameSize) {
+        return std::unexpected(tr("Could not allocate %1 bytes for the image frame.")
+                                   .arg(frameSize));
+    }
     qint64 offset = 0;
     while (offset < frameSize) {
         const qint64 bytesRead = file.read(data.data() + offset,
