@@ -9,6 +9,8 @@
 #include "rawimagedecoder.h"
 
 #include <QByteArray>
+#include <QList>
+#include <QPair>
 #include <QSizeF>
 #include <QString>
 
@@ -98,11 +100,13 @@ private:
     QAction *m_pixelGridAction = nullptr;
     QAction *m_exportAction = nullptr;
     const RawImageDecoder *m_decoder = nullptr;
+    const RawImageDecoder *m_loadedDecoder = nullptr;
     bool m_hasFileLayout = false;
     int m_fileWidth = 0;
     int m_fileHeight = 0;
     int m_fileStride = 0;
     int m_fileScanline = 0;
+    QList<QPair<QString, QString>> m_fileNameMetadata;
     QString m_metadataError;
     qint64 m_frameCount = 1;
     QByteArray m_rawData;

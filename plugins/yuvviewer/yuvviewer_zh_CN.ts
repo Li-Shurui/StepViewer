@@ -79,6 +79,11 @@
         <translation>宽度和高度必须介于 %1 和 %2 之间。</translation>
     </message>
     <message>
+        <location filename="rawimagedecoder.cpp" line="27"/>
+        <source>Stride and scanline must both be positive.</source>
+        <translation>stride 和 scanline 都必须为正数。</translation>
+    </message>
+    <message>
         <location filename="rawimagedecoder.cpp" line="25"/>
         <source>Stride must not exceed %1 and scanline must not exceed %2.</source>
         <translation>stride 不能超过 %1，scanline 不能超过 %2。</translation>
@@ -92,6 +97,16 @@
         <location filename="rawimagedecoder.cpp" line="58"/>
         <source>Cannot open the file: %1</source>
         <translation>无法打开文件：%1</translation>
+    </message>
+    <message>
+        <location filename="rawimagedecoder.cpp" line="71"/>
+        <source>The calculated %1 frame size is invalid.</source>
+        <translation>计算得到的 %1 帧大小无效。</translation>
+    </message>
+    <message>
+        <location filename="rawimagedecoder.cpp" line="75"/>
+        <source>The %1 frame is too large to load into memory.</source>
+        <translation>%1 帧过大，无法加载到内存中。</translation>
     </message>
     <message>
         <source>File size does not match the %1 layout. Expected %2 bytes, found %3 bytes (width=%4, height=%5, stride=%6, scanline=%7).</source>
@@ -117,6 +132,16 @@
         <location filename="rawimagedecoder.cpp" line="104"/>
         <source>Loading canceled.</source>
         <translation>加载已取消。</translation>
+    </message>
+    <message>
+        <location filename="rawimagedecoder.cpp" line="111"/>
+        <source>Not enough memory to allocate %1 bytes for the image frame.</source>
+        <translation>内存不足，无法为图像帧分配 %1 字节。</translation>
+    </message>
+    <message>
+        <location filename="rawimagedecoder.cpp" line="115"/>
+        <source>Could not allocate %1 bytes for the image frame.</source>
+        <translation>无法为图像帧分配 %1 字节。</translation>
     </message>
     <message>
         <location filename="rawimagedecoder.cpp" line="108"/>
@@ -278,6 +303,21 @@
         <translation>文件名中的图像元数据不完整。预期为 &quot;_w[width]_h[height]_stride[stride]_scanline[scanline]&quot;。</translation>
     </message>
     <message>
+        <location filename="yuvviewer.cpp" line="181"/>
+        <source>No decoder is available for the loaded image.</source>
+        <translation>没有可用于已加载图像的解码器。</translation>
+    </message>
+    <message>
+        <location filename="yuvviewer.cpp" line="186"/>
+        <source>The selected format produced an invalid frame size.</source>
+        <translation>所选格式计算出了无效的帧大小。</translation>
+    </message>
+    <message>
+        <location filename="yuvviewer.cpp" line="190"/>
+        <source>Loaded data size (%1 bytes) does not match the %2 frame size (%3 bytes). The format may have changed while the image was loading.</source>
+        <translation>已加载数据大小（%1 字节）与 %2 帧大小（%3 字节）不匹配。图像加载期间格式可能发生了变化。</translation>
+    </message>
+    <message>
         <location filename="yuvviewer.cpp" line="233"/>
         <source>%1  (mean %2)</source>
         <translation>%1（均值 %2）</translation>
@@ -310,6 +350,26 @@
         <location filename="yuvviewer.cpp" line="676"/>
         <source>The YUV viewer is not fully initialized.</source>
         <translation>YUV 查看器尚未完全初始化。</translation>
+    </message>
+    <message>
+        <location filename="yuvviewer.cpp" line="813"/>
+        <source>Not enough memory to load and render the image.</source>
+        <translation>内存不足，无法加载和渲染图像。</translation>
+    </message>
+    <message>
+        <location filename="yuvviewer.cpp" line="817"/>
+        <source>Unexpected error while loading the image: %1</source>
+        <translation>加载图像时发生意外错误：%1</translation>
+    </message>
+    <message>
+        <location filename="yuvviewer.cpp" line="821"/>
+        <source>An unknown error occurred while loading the image.</source>
+        <translation>加载图像时发生未知错误。</translation>
+    </message>
+    <message>
+        <location filename="yuvviewer.cpp" line="963"/>
+        <source>The selected format no longer matches the loaded image. Reload the file.</source>
+        <translation>所选格式与已加载图像不再匹配。请重新加载文件。</translation>
     </message>
     <message>
         <location filename="yuvviewer.cpp" line="709"/>
@@ -355,6 +415,16 @@
         <location filename="yuvviewer.cpp" line="958"/>
         <source>File</source>
         <translation>文件</translation>
+    </message>
+    <message>
+        <location filename="yuvviewer.cpp" line="1007"/>
+        <source>Pipeline</source>
+        <translation>处理管线</translation>
+    </message>
+    <message>
+        <location filename="yuvviewer.cpp" line="1009"/>
+        <source>Output</source>
+        <translation>输出端口</translation>
     </message>
     <message>
         <location filename="yuvviewer.cpp" line="959"/>

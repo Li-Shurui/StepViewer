@@ -39,8 +39,10 @@
 #include <array>
 #include <expected>
 #include <limits>
+#include <new>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 using namespace Qt::StringLiterals;
 
@@ -49,6 +51,7 @@ constexpr int minimumDimension = RawImageDecoder::minimumDimension;
 constexpr int maximumDimension = RawImageDecoder::maximumDimension;
 
 using OptionalLayoutResult = std::expected<std::optional<RawImageLayout>, QString>;
+using FileNameMetadata = QList<QPair<QString, QString>>;
 
 std::expected<int, QString> capturedInteger(const QRegularExpressionMatch &match, int index,
                                             const QString &fieldName)
@@ -60,6 +63,42 @@ std::expected<int, QString> capturedInteger(const QRegularExpressionMatch &match
                                    .arg(fieldName, match.captured(index)));
     }
     return value;
+}
+
+FileNameMetadata metadataFromFileName(const QString &fileName)
+{
+    const QString baseName = QFileInfo(fileName).completeBaseName();
+    static const QRegularExpression pipelinePattern(
+        QStringLiteral(R"((?:^|_)p\[([^\]]+)\])"),
+        QRegularExpression::CaseInsensitiveOption);
+    if (!pipelinePattern.match(baseName).hasMatch())
+        return {};
+
+    static const QRegularExpression tagPattern(
+        QStringLiteral(R"((?:^|_)([A-Za-z][A-Za-z0-9]*)\[([^\]]*)\])"));
+
+    FileNameMetadata metadata;
+    auto matches = tagPattern.globalMatch(baseName);
+    while (matches.hasNext()) {
+        const QRegularExpressionMatch match = matches.next();
+        QString key = match.captured(1);
+        const QString value = match.captured(2);
+
+        if (key.compare(QStringLiteral("p"), Qt::CaseInsensitive) == 0) {
+            key = QStringLiteral("pipeline");
+        } else if (key.compare(QStringLiteral("port"), Qt::CaseInsensitive) == 0
+                   && baseName.left(match.capturedStart(1))
+                          .endsWith(QStringLiteral("[out]_"), Qt::CaseInsensitive)) {
+            key = QStringLiteral("output");
+        } else if (key.compare(QStringLiteral("w"), Qt::CaseInsensitive) == 0) {
+            key = QStringLiteral("width");
+        } else if (key.compare(QStringLiteral("h"), Qt::CaseInsensitive) == 0) {
+            key = QStringLiteral("height");
+        }
+
+        metadata.append(qMakePair(key, value));
+    }
+    return metadata;
 }
 
 OptionalLayoutResult layoutFromFileName(const QString &fileName, const RawImageDecoder &decoder)
@@ -137,10 +176,37 @@ qint64 frameCount(const RawImageDecoder &decoder, const RawImageLayout &layout,
 }
 
 // Renders the composite image (plane < 0) or a single component plane.
+std::expected<void, QString> validateFrameData(const RawImageDecoder *decoder,
+                                               const QByteArray &data,
+                                               const RawImageLayout &layout)
+{
+    if (!decoder)
+        return std::unexpected(YuvViewer::tr("No decoder is available for the loaded image."));
+
+    const qint64 expectedSize = decoder->expectedByteSize(layout);
+    if (expectedSize <= 0) {
+        return std::unexpected(YuvViewer::tr(
+            "The selected format produced an invalid frame size."));
+    }
+    if (data.size() != expectedSize) {
+        return std::unexpected(YuvViewer::tr(
+            "Loaded data size (%1 bytes) does not match the %2 frame size (%3 bytes). "
+            "The format may have changed while the image was loading.")
+                                   .arg(data.size())
+                                   .arg(decoder->displayName())
+                                   .arg(expectedSize));
+    }
+    return {};
+}
+
 RawImageDecoder::ImageResult renderImage(const RawImageDecoder *decoder,
                                          const QByteArray &data,
                                          const RawImageLayout &layout, int plane)
 {
+    const auto validData = validateFrameData(decoder, data, layout);
+    if (!validData)
+        return std::unexpected(validData.error());
+
     if (plane < 0)
         return decoder->convertToImage(data, layout);
     return decoder->extractPlane(data, layout, plane);
@@ -521,6 +587,7 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
 
     m_hasFileLayout = false;
     m_fileWidth = m_fileHeight = m_fileStride = m_fileScanline = 0;
+    m_fileNameMetadata = metadataFromFileName(file->fileName());
     m_metadataError.clear();
 
     const auto parsedLayout = layoutFromFileName(file->fileName(), *m_decoder);
@@ -600,8 +667,22 @@ bool YuvViewer::restoreState(QByteArray &state)
     QString formatId;
     if (!stream.atEnd())
         stream >> formatId;
-    if (!formatId.isEmpty()) {
+
+    bool formatChanged = false;
+    const RawImageDecoder *extensionDecoder = m_file
+        ? RawImageDecoders::findByExtension(QFileInfo(m_file->fileName()).suffix())
+        : nullptr;
+    if (extensionDecoder) {
+        // A specific extension such as .Y8 or .NV12 is authoritative. The
+        // saved format belongs to the previously opened file and must not
+        // reinterpret data that is already loading for this file.
+        formatChanged = m_decoder != extensionDecoder;
+        m_decoder = extensionDecoder;
+        if (m_formatComboBox)
+            m_formatComboBox->setCurrentIndex(RawImageDecoders::all().indexOf(extensionDecoder));
+    } else if (!formatId.isEmpty()) {
         if (const RawImageDecoder *decoder = RawImageDecoders::findById(formatId)) {
+            formatChanged = m_decoder != decoder;
             m_decoder = decoder;
             if (m_formatComboBox)
                 m_formatComboBox->setCurrentIndex(RawImageDecoders::all().indexOf(decoder));
@@ -634,9 +715,9 @@ bool YuvViewer::restoreState(QByteArray &state)
         m_widthSpinBox->setValue(width);
         m_heightSpinBox->setValue(height);
         reload();
-    } else if (m_hasFileLayout && (frame > 1 || plane > 0)) {
+    } else if (m_hasFileLayout && (formatChanged || frame > 1 || plane > 0)) {
         // The initial reload in setupYuvUi() ran before the state was
-        // restored; reload again with the restored frame and plane.
+        // restored; reload again with the restored format, frame and plane.
         reload();
     }
     return true;
@@ -711,23 +792,35 @@ void YuvViewer::reload()
     startAsyncTaskWithProgress<LoadResult>(
         [fileName, loadLayout, decoder, frameIndex, plane](QPromise<LoadResult> &promise) {
             promise.setProgressRange(0, 100);
-            auto data = decoder->readData(fileName, loadLayout, frameIndex,
-                                          [&promise](qint64 done, qint64 total) {
-                promise.setProgressValue(total > 0 ? int(done * 100 / total) : 0);
-                return !promise.isCanceled();
-            });
-            if (!data) {
-                promise.addResult(LoadResult(std::unexpected(data.error())));
-                return;
+            try {
+                auto data = decoder->readData(fileName, loadLayout, frameIndex,
+                                              [&promise](qint64 done, qint64 total) {
+                    promise.setProgressValue(total > 0 ? int(done * 100 / total) : 0);
+                    return !promise.isCanceled();
+                });
+                if (!data) {
+                    promise.addResult(LoadResult(std::unexpected(data.error())));
+                    return;
+                }
+                auto image = renderImage(decoder, *data, loadLayout, plane);
+                if (!image) {
+                    promise.addResult(LoadResult(std::unexpected(image.error())));
+                    return;
+                }
+                QImage histogram = computeHistogramImage(decoder, *data, loadLayout);
+                promise.addResult(LoadedFrame{std::move(*data), std::move(*image),
+                                              std::move(histogram)});
+            } catch (const std::bad_alloc &) {
+                promise.addResult(LoadResult(std::unexpected(
+                    YuvViewer::tr("Not enough memory to load and render the image."))));
+            } catch (const std::exception &exception) {
+                promise.addResult(LoadResult(std::unexpected(
+                    YuvViewer::tr("Unexpected error while loading the image: %1")
+                        .arg(QString::fromLocal8Bit(exception.what())))));
+            } catch (...) {
+                promise.addResult(LoadResult(std::unexpected(
+                    YuvViewer::tr("An unknown error occurred while loading the image."))));
             }
-            auto image = renderImage(decoder, *data, loadLayout, plane);
-            if (!image) {
-                promise.addResult(LoadResult(std::unexpected(image.error())));
-                return;
-            }
-            QImage histogram = computeHistogramImage(decoder, *data, loadLayout);
-            promise.addResult(LoadedFrame{std::move(*data), std::move(*image),
-                                          std::move(histogram)});
         },
         [this](int value) {
             statusMessage(tr("Loading... %1%").arg(value), tr("open"), 0);
@@ -739,6 +832,7 @@ void YuvViewer::reload()
             }
             // Keep the raw samples: plane switching, the pixel probe and
             // the histogram reuse them without re-reading the file.
+            m_loadedDecoder = decoder;
             m_rawData = std::move(result->data);
             m_layout = loadLayout;
             displayImage(result->image);
@@ -870,10 +964,15 @@ void YuvViewer::updateFormatMatches()
 
 void YuvViewer::onPlaneChanged()
 {
-    if (!m_decoder || m_rawData.isEmpty())
+    if (!m_loadedDecoder || m_rawData.isEmpty())
         return;  // nothing loaded yet; the next reload applies the selection
 
-    const RawImageDecoder *decoder = m_decoder;
+    if (m_loadedDecoder != m_decoder) {
+        reportError(tr("The selected format no longer matches the loaded image. Reload the file."));
+        return;
+    }
+
+    const RawImageDecoder *decoder = m_loadedDecoder;
     const QByteArray data = m_rawData;  // implicitly shared: cheap capture
     const RawImageLayout layout = m_layout;
     const int plane = currentPlane();
@@ -903,6 +1002,7 @@ void YuvViewer::clear()
     if (m_histogramLabel)
         m_histogramLabel->clear();
 
+    m_loadedDecoder = nullptr;
     m_rawData.clear();
     m_layout = {};
     m_image = {};
@@ -956,6 +1056,21 @@ void YuvViewer::updateInfoTab(const QString &fileName, const RawImageLayout &lay
 
     m_infoTable->setRowCount(0);
     addRow(tr("File"), QDir::toNativeSeparators(fileName));
+    for (const auto &[key, value] : std::as_const(m_fileNameMetadata)) {
+        if (key.compare(QStringLiteral("width"), Qt::CaseInsensitive) == 0
+            || key.compare(QStringLiteral("height"), Qt::CaseInsensitive) == 0
+            || key.compare(QStringLiteral("stride"), Qt::CaseInsensitive) == 0
+            || key.compare(QStringLiteral("scanline"), Qt::CaseInsensitive) == 0) {
+            continue;
+        }
+
+        QString displayName = key;
+        if (key == QStringLiteral("pipeline"))
+            displayName = tr("Pipeline");
+        else if (key == QStringLiteral("output"))
+            displayName = tr("Output");
+        addRow(displayName, value);
+    }
     addRow(tr("Format"), decoder->displayName());
     addRow(tr("Width"), tr("%1 px").arg(layout.width));
     addRow(tr("Height"), tr("%1 px").arg(layout.height));
@@ -990,17 +1105,24 @@ QPoint YuvViewer::compositePosition(QPoint widgetPos) const
 
 bool YuvViewer::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == m_imageWidget && m_decoder && !m_rawData.isEmpty()) {
+    if (watched == m_imageWidget && m_loadedDecoder && !m_rawData.isEmpty()) {
         switch (event->type()) {
         case QEvent::MouseMove: {
             const auto *mouseEvent = static_cast<const QMouseEvent *>(event);
             const QPoint pos = compositePosition(mouseEvent->position().toPoint());
             if (pos.x() >= 0) {
+                const auto validData = validateFrameData(m_loadedDecoder, m_rawData, m_layout);
+                if (!validData) {
+                    reportError(validData.error());
+                    m_loadedDecoder = nullptr;
+                    m_rawData.clear();
+                    return false;
+                }
                 statusMessage(tr("(%1, %2)  %3")
                                   .arg(pos.x())
                                   .arg(pos.y())
-                                  .arg(m_decoder->describePixel(m_rawData, m_layout,
-                                                                pos.x(), pos.y())),
+                                  .arg(m_loadedDecoder->describePixel(m_rawData, m_layout,
+                                                                      pos.x(), pos.y())),
                               tr("probe"), 0);
             }
             return false;
