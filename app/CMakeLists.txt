@@ -54,6 +54,7 @@ qt_add_executable(stepviewer
     recentfilemenu.cpp recentfilemenu.h
     viewerinterfaces.h
     documentviewer.qrc
+    qdarkstyle/dark/darkstyle.qrc
     ${app_icon_resource}
 )
 
@@ -67,6 +68,9 @@ qt_add_translations(stepviewer
 set_target_properties(stepviewer PROPERTIES
     OUTPUT_NAME StepViewer
     WIN32_EXECUTABLE TRUE
+    AUTORCC ON
+    AUTOMOC ON
+    AUTOUIC ON
 )
 
 target_link_libraries(stepviewer PRIVATE

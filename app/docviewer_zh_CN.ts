@@ -112,6 +112,11 @@
         <translation>语言</translation>
     </message>
     <message>
+        <location filename="mainwindow.ui" line="116"/>
+        <source>Theme</source>
+        <translation>主题</translation>
+    </message>
+    <message>
         <location filename="mainwindow.ui" line="124"/>
         <source>ToolBar</source>
         <translation>工具栏</translation>
@@ -237,6 +242,31 @@
         <location filename="mainwindow.ui" line="261"/>
         <source>简体中文(&amp;C)</source>
         <translation>简体中文(&amp;C)</translation>
+    </message>
+    <message>
+        <location filename="mainwindow.ui" line="280"/>
+        <source>&amp;Dark</source>
+        <translation>深色(&amp;D)</translation>
+    </message>
+    <message>
+        <location filename="mainwindow.ui" line="283"/>
+        <source>Use the QDarkStyleSheet dark theme</source>
+        <translation>使用 QDarkStyleSheet 深色主题</translation>
+    </message>
+    <message>
+        <location filename="mainwindow.ui" line="291"/>
+        <source>&amp;None</source>
+        <translation>无主题(&amp;N)</translation>
+    </message>
+    <message>
+        <location filename="mainwindow.ui" line="294"/>
+        <source>Use the default Qt style with no extra stylesheet</source>
+        <translation>使用默认 Qt 样式，不加载额外样式表</translation>
+    </message>
+    <message>
+        <location filename="mainwindow.cpp" line="101"/>
+        <source>Unable to load the dark theme.</source>
+        <translation>无法加载深色主题。</translation>
     </message>
     <message numerus="yes">
         <location filename="mainwindow.cpp" line="39"/>

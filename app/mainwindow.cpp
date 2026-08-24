@@ -9,9 +9,13 @@
 #include "recentfilemenu.h"
 #include "translator.h"
 
+#include <QAction>
+#include <QActionGroup>
+#include <QApplication>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QFile>
 #include <QFileDialog>
 #include <QToolButton>
 #include <QMessageBox>
@@ -33,6 +37,15 @@ MainWindow::MainWindow(Translator &translator, QWidget *parent)
             [this] { onActionSwitchLanguage(QLocale::Chinese); });
     connect(ui->actionEnglish, &QAction::triggered, this,
             [this] { onActionSwitchLanguage(QLocale::English); });
+
+    auto *themeGroup = new QActionGroup(this);
+    themeGroup->addAction(ui->actionThemeDark);
+    themeGroup->addAction(ui->actionThemeNone);
+    themeGroup->setExclusive(true);
+    connect(themeGroup, &QActionGroup::triggered, this, [this](QAction *action) {
+        onActionSwitchTheme(action == ui->actionThemeDark ? QString(themeDark)
+                                                          : QString(themeNone));
+    });
 
     m_recentFiles.reset(new RecentFiles(ui->actionRecent));
     connect(m_recentFiles.get(), &RecentFiles::countChanged, this, [&](int count){
@@ -72,6 +85,36 @@ void MainWindow::onActionSwitchLanguage(QLocale::Language lang)
     QLocale::setDefault(QLocale(lang));
     QEvent event(QEvent::LocaleChange);
     QCoreApplication::sendEvent(this, &event);
+}
+
+void MainWindow::onActionSwitchTheme(const QString &themeId)
+{
+    applyTheme(themeId);
+    QSettings settings;
+    settings.setValue(settingsTheme, m_themeId);
+}
+
+void MainWindow::applyTheme(const QString &themeId)
+{
+    if (themeId != themeNone) {
+        QFile file(u":/qdarkstyle/dark/darkstyle.qss"_s);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            statusBar()->showMessage(tr("Unable to load the dark theme."));
+            qApp->setStyleSheet(QString());
+            m_themeId = QString(themeNone);
+        } else {
+            qApp->setStyleSheet(QString::fromUtf8(file.readAll()));
+            m_themeId = QString(themeDark);
+        }
+    } else {
+        qApp->setStyleSheet(QString());
+        m_themeId = QString(themeNone);
+    }
+
+    const QSignalBlocker darkBlocker(ui->actionThemeDark);
+    const QSignalBlocker noneBlocker(ui->actionThemeNone);
+    ui->actionThemeDark->setChecked(m_themeId == themeDark);
+    ui->actionThemeNone->setChecked(m_themeId == themeNone);
 }
 
 void MainWindow::onActionOpenTriggered()
@@ -282,6 +325,9 @@ void MainWindow::readSettings()
 
     // Restore recent files
     m_recentFiles->restoreFromSettings(settings, settingsFiles);
+
+    // Dark is the default when no theme has been saved yet.
+    applyTheme(settings.value(settingsTheme, QString(themeDark)).toString());
 }
 
 void MainWindow::saveSettings() const
@@ -296,6 +342,8 @@ void MainWindow::saveSettings() const
 
     // Save recent files
     m_recentFiles->saveSettings(settings, settingsFiles);
+
+    settings.setValue(settingsTheme, m_themeId);
 
     settings.sync();
 }

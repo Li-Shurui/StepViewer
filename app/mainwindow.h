@@ -43,8 +43,10 @@ private slots:
     void onActionAboutTriggered();
     void onActionAboutQtTriggered();
     void onActionSwitchLanguage(QLocale::Language lang);
+    void onActionSwitchTheme(const QString &themeId);
 
 private:
+    void applyTheme(const QString &themeId);
     void readSettings();
     void saveSettings() const;
     void restoreViewerSettings();
@@ -58,11 +60,15 @@ private:
     std::unique_ptr<ViewerFactory> m_factory;
     std::array<QMetaObject::Connection, 3> m_viewerConnections;
     Translator &m_translator;
+    QString m_themeId = QStringLiteral("dark");
 
     static constexpr QLatin1StringView settingsDir = QLatin1StringView("WorkingDir");
     static constexpr QLatin1StringView settingsMainWindow = QLatin1StringView("MainWindow");
     static constexpr QLatin1StringView settingsViewers = QLatin1StringView("Viewers");
     static constexpr QLatin1StringView settingsFiles = QLatin1StringView("RecentFiles");
+    static constexpr QLatin1StringView settingsTheme = QLatin1StringView("Theme");
+    static constexpr QLatin1StringView themeDark = QLatin1StringView("dark");
+    static constexpr QLatin1StringView themeNone = QLatin1StringView("none");
 };
 
 #endif // MAINWINDOW_H
