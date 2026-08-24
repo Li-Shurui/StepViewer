@@ -438,7 +438,7 @@ public:
     QLatin1StringView id() const override { return "nv12"_L1; }
     QString displayName() const override { return QStringLiteral("NV12"); }
     QString mimeType() const override { return "video/x-raw-nv12"_L1; }
-    QStringList fileExtensions() const override { return {"nv12"_L1, "NV12"_L1}; }
+    QStringList fileExtensions() const override { return {"nv12"_L1, "NV12"_L1, "YUV420NV12"_L1}; }
 
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_NV12; }
@@ -451,7 +451,7 @@ public:
     QLatin1StringView id() const override { return "nv21"_L1; }
     QString displayName() const override { return QStringLiteral("NV21"); }
     QString mimeType() const override { return "video/x-raw-nv21"_L1; }
-    QStringList fileExtensions() const override { return {"nv21"_L1, "NV21"_L1}; }
+    QStringList fileExtensions() const override { return {"nv21"_L1, "NV21"_L1, "YUV420NV21"_L1}; }
 
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_NV21; }
