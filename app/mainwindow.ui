@@ -111,9 +111,17 @@
      <addaction name="actionEnglish"/>
      <addaction name="actionChinese"/>
     </widget>
+    <widget class="QMenu" name="menuTheme">
+     <property name="title">
+      <string>Theme</string>
+     </property>
+     <addaction name="actionThemeDark"/>
+     <addaction name="actionThemeNone"/>
+    </widget>
     <addaction name="actionAbout"/>
     <addaction name="actionAboutQt"/>
     <addaction name="menuLanguage"/>
+    <addaction name="menuTheme"/>
    </widget>
    <addaction name="qtFileMenu"/>
    <addaction name="menuHelp"/>
@@ -259,6 +267,31 @@
   <action name="actionChinese">
    <property name="text">
     <string>简体中文(&amp;C)</string>
+   </property>
+  </action>
+  <action name="actionThemeDark">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="checked">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>&amp;Dark</string>
+   </property>
+   <property name="toolTip">
+    <string>Use the QDarkStyleSheet dark theme</string>
+   </property>
+  </action>
+  <action name="actionThemeNone">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>&amp;None</string>
+   </property>
+   <property name="toolTip">
+    <string>Use the default Qt style with no extra stylesheet</string>
    </property>
   </action>
  </widget>
