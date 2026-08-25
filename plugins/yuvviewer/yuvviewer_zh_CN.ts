@@ -217,6 +217,11 @@
         <translation>Y=%1 U=%2 V=%3</translation>
     </message>
     <message>
+        <location filename="rawimagedecoder_p.h" line="273"/>
+        <source>Y=%1 U=%2 V=%3 A=%4</source>
+        <translation>Y=%1 U=%2 V=%3 A=%4</translation>
+    </message>
+    <message>
         <location filename="rawimagedecoder_p.h" line="233"/>
         <source>R=%1 G=%2 B=%3</source>
         <translation>R=%1 G=%2 B=%3</translation>

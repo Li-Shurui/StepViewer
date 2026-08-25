@@ -129,7 +129,7 @@ QString describePixel(...) const;                  // 像素探针
 
 ### 格式族
 
-33 个格式按族组织，族基类装布局规则和转换，具体格式只填分量顺序和命名：
+34 个格式按族组织，族基类装布局规则和转换，具体格式只填分量顺序和命名：
 
 | 族基类 | 文件 | 具体格式 |
 | --- | --- | --- |
@@ -142,6 +142,7 @@ QString describePixel(...) const;                  // 像素探针
 | `SemiPlanarYuv422Decoder` | `yuvdecoders.cpp` | NV16, NV61 |
 | `PlanarYuv444Decoder` | `yuvdecoders.cpp` | I444, YV24 |
 | `SemiPlanarYuv444Decoder` | `yuvdecoders.cpp` | NV24, NV42 |
+| `PackedYuv444Decoder` | `yuvdecoders.cpp` | YUV444 |
 | `PackedRgbDecoder` | `rgbdecoders.cpp` | RGB888, BGR888, RGBA8888, RGBX8888, BGRA8888, BGRX8888, RGB565, BGR565, RGB555, BGR555 |
 | `PackedRgb16Decoder` | `rgbdecoders.cpp` | RGB48, RGBA64 |
 | （直接继承） | `rgbdecoders.cpp` | Y8 |
@@ -156,7 +157,8 @@ QString describePixel(...) const;                  // 像素探针
   `runConversion()`（把 OpenCV 异常翻成错误结果）；
 - 平面提取：`grayscalePlane()` / `stridedPlane()` / `rgb16Plane()` /
   `grayscale16Plane()` / `strided16Plane()`；
-- 像素描述：`describeYuv()` / `describeRgb()` / `describeRgba()`。
+- 像素描述：`describeYuv()` / `describeYuva()` / `describeRgb()` /
+  `describeRgba()`。
 
 ### 加一个新格式
 

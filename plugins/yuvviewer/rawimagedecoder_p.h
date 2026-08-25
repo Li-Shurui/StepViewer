@@ -267,6 +267,11 @@ inline QString describeYuv(int y, int u, int v)
     return RawImageDecoder::tr("Y=%1 U=%2 V=%3").arg(y).arg(u).arg(v);
 }
 
+inline QString describeYuva(int y, int u, int v, int a)
+{
+    return RawImageDecoder::tr("Y=%1 U=%2 V=%3 A=%4").arg(y).arg(u).arg(v).arg(a);
+}
+
 inline QString describeRgb(int r, int g, int b)
 {
     return RawImageDecoder::tr("R=%1 G=%2 B=%3").arg(r).arg(g).arg(b);
