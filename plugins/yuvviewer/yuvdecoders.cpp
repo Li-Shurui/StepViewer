@@ -980,31 +980,10 @@ protected:
 // chroma plane order (U,V vs V,U) differs between them.
 class PlanarYuv444Decoder : public RawImageDecoder
 {
-    Q_DECLARE_TR_FUNCTIONS(PlanarYuv444Decoder)
-
 public:
     LayoutResult validateLayout(const RawImageLayout &layout) const override
     {
-        const LayoutResult baseResult = RawImageDecoder::validateLayout(layout);
-        if (!baseResult)
-            return baseResult;
-
-        if (layout.stride < layout.width) {
-            return std::unexpected(tr("%1 stride must be at least the width. "
-                                      "Received width %2, stride %3.")
-                                       .arg(displayName())
-                                       .arg(layout.width)
-                                       .arg(layout.stride));
-        }
-        if (layout.scanline < layout.height) {
-            return std::unexpected(tr("%1 scanline must be at least the height. "
-                                      "Received height %2, scanline %3.")
-                                       .arg(displayName())
-                                       .arg(layout.height)
-                                       .arg(layout.scanline));
-        }
-
-        return layout;
+        return validateYuv444Layout(*this, layout);
     }
 
     qint64 expectedByteSize(const RawImageLayout &layout) const override
@@ -1103,6 +1082,108 @@ protected:
     bool chromaOrderIsUV() const override { return false; }
 };
 
+// Shared implementation for two-plane (semi-planar) YUV 4:4:4 formats:
+// a full-resolution Y plane followed by an interleaved chroma plane
+// that is not subsampled at all, so it carries a U and a V sample per
+// pixel and its rows are twice as wide as the Y rows. Only the chroma
+// byte order (UV vs VU) differs between them.
+class SemiPlanarYuv444Decoder : public RawImageDecoder
+{
+public:
+    LayoutResult validateLayout(const RawImageLayout &layout) const override
+    {
+        return validateYuv444Layout(*this, layout);
+    }
+
+    qint64 expectedByteSize(const RawImageLayout &layout) const override
+    {
+        // The chroma plane is twice the size of the Y plane.
+        return qint64(layout.stride) * qint64(layout.scanline) * 3;
+    }
+
+    ImageResult convertToImage(const QByteArray &data,
+                               const RawImageLayout &layout) const override
+    {
+        return runConversion(*this, [&]() -> ImageResult {
+            auto *pixels = reinterpret_cast<uchar *>(const_cast<char *>(data.constData()));
+            const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+
+            cv::Mat yPlane(layout.height, layout.width, CV_8UC1, pixels,
+                           static_cast<size_t>(layout.stride));
+            cv::Mat uvPlane(layout.height, layout.width, CV_8UC2, pixels + yPlaneBytes,
+                            static_cast<size_t>(layout.stride) * 2);
+
+            // cvtColorTwoPlane() only knows the subsampled 4:2:0 layouts,
+            // so the chroma is deinterleaved and merged into a plain
+            // three-channel YUV image instead.
+            cv::Mat chroma[2];
+            cv::split(uvPlane, chroma);
+            const cv::Mat planes[3] = {yPlane,
+                                       chroma[chromaOrderIsUV() ? 0 : 1],
+                                       chroma[chromaOrderIsUV() ? 1 : 0]};
+            cv::Mat yuv;
+            cv::merge(planes, 3, yuv);
+
+            // OpenCV's three-channel YUV conversion has no RGBA variant.
+            cv::Mat rgb;
+            cv::cvtColor(yuv, rgb, cv::COLOR_YUV2RGB);
+            return rgbaMatToImage(rgb, layout, QImage::Format_RGB888);
+        });
+    }
+
+    QStringList planeNames() const override
+    {
+        return {QStringLiteral("Y"), QStringLiteral("U"), QStringLiteral("V")};
+    }
+
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        switch (plane) {
+        case 0:
+            return grayscalePlane(pixels, layout.width, layout.height, layout.stride);
+        case 1:
+        case 2: {
+            const int offset = ((plane == 1) == chromaOrderIsUV()) ? 0 : 1;
+            return stridedPlane(pixels + yPlaneBytes, layout.width, layout.height,
+                                qint64(layout.stride) * 2, 2, offset);
+        }
+        default:
+            return invalidPlane(plane);
+        }
+    }
+
+    QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                          int x, int y) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
+        const int luma = pixels[qint64(y) * layout.stride + x];
+        const uchar *chroma = pixels + yPlaneBytes + qint64(y) * layout.stride * 2 + x * 2;
+        const int u = chroma[chromaOrderIsUV() ? 0 : 1];
+        const int v = chroma[chromaOrderIsUV() ? 1 : 0];
+        return describeYuv(luma, u, v);
+    }
+
+protected:
+    // NV24 interleaves U,V; NV42 interleaves V,U.
+    virtual bool chromaOrderIsUV() const = 0;
+};
+
+class Nv24Decoder final : public SemiPlanarYuv444Decoder
+{
+public:
+    QLatin1StringView id() const override { return "nv24"_L1; }
+    QString displayName() const override { return QStringLiteral("NV24"); }
+    QString mimeType() const override { return "video/x-raw-nv24"_L1; }
+    QStringList fileExtensions() const override { return {"nv24"_L1, "NV24"_L1}; }
+
+protected:
+    bool chromaOrderIsUV() const override { return true; }
+};
+
 } // namespace
 
 QList<const RawImageDecoder *> RawImageDecoders::createYuvDecoders()
@@ -1126,5 +1207,6 @@ QList<const RawImageDecoder *> RawImageDecoders::createYuvDecoders()
         new Nv61Decoder,
         new I444Decoder,
         new Yv24Decoder,
+        new Nv24Decoder,
     };
 }
