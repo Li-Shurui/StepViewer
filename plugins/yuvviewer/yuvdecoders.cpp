@@ -118,7 +118,10 @@ public:
     QLatin1StringView id() const override { return "nv21"_L1; }
     QString displayName() const override { return QStringLiteral("NV21"); }
     QString mimeType() const override { return "video/x-raw-nv21"_L1; }
-    QStringList fileExtensions() const override { return {"nv21"_L1, "NV21"_L1, "YUV420NV21"_L1}; }
+    QStringList fileExtensions() const override {
+        return {"nv21"_L1, "NV21"_L1, "YUV420NV21"_L1, "yuv420nv21"_L1
+                "yuv420sp"_L1, "YUV420SP"_L1};
+    }
 
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_NV21; }
@@ -383,7 +386,10 @@ public:
     QLatin1StringView id() const override { return "i420"_L1; }
     QString displayName() const override { return QStringLiteral("I420"); }
     QString mimeType() const override { return "video/x-raw-i420"_L1; }
-    QStringList fileExtensions() const override { return {"i420"_L1, "I420"_L1}; }
+    QStringList fileExtensions() const override {
+        return {"i420"_L1, "I420"_L1, "yuv420p"_L1, "YUV420P"_L1,
+                "yu12"_L1, "YU12"_L1, "IYUV"_L1, "iyuv"_L1};
+    }
 
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_I420; }
@@ -791,7 +797,9 @@ public:
     QLatin1StringView id() const override { return "i422"_L1; }
     QString displayName() const override { return QStringLiteral("I422"); }
     QString mimeType() const override { return "video/x-raw-i422"_L1; }
-    QStringList fileExtensions() const override { return {"i422"_L1, "I422"_L1}; }
+    QStringList fileExtensions() const override {
+        return {"i422"_L1, "I422"_L1, "yuv422p"_L1, "YUV422P"_L1};
+    }
 
 protected:
     bool chromaOrderIsUV() const override { return true; }
@@ -1033,7 +1041,7 @@ public:
     QLatin1StringView id() const override { return "i444"_L1; }
     QString displayName() const override { return QStringLiteral("I444"); }
     QString mimeType() const override { return "video/x-raw-i444"_L1; }
-    QStringList fileExtensions() const override { return {"i444"_L1, "I444"_L1}; }
+    QStringList fileExtensions() const override { return {"i444"_L1, "I444"_L1, "yuv444p"_L1, "YUV444P"_L1}; }
 
 protected:
     bool chromaOrderIsUV() const override { return true; }
