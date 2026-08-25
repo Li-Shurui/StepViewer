@@ -1184,6 +1184,18 @@ protected:
     bool chromaOrderIsUV() const override { return true; }
 };
 
+class Nv42Decoder final : public SemiPlanarYuv444Decoder
+{
+public:
+    QLatin1StringView id() const override { return "nv42"_L1; }
+    QString displayName() const override { return QStringLiteral("NV42"); }
+    QString mimeType() const override { return "video/x-raw-nv42"_L1; }
+    QStringList fileExtensions() const override { return {"nv42"_L1, "NV42"_L1}; }
+
+protected:
+    bool chromaOrderIsUV() const override { return false; }
+};
+
 } // namespace
 
 QList<const RawImageDecoder *> RawImageDecoders::createYuvDecoders()
@@ -1208,5 +1220,6 @@ QList<const RawImageDecoder *> RawImageDecoders::createYuvDecoders()
         new I444Decoder,
         new Yv24Decoder,
         new Nv24Decoder,
+        new Nv42Decoder,
     };
 }

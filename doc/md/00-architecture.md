@@ -129,7 +129,7 @@ QString describePixel(...) const;                  // 像素探针
 
 ### 格式族
 
-32 个格式按族组织，族基类装布局规则和转换，具体格式只填分量顺序和命名：
+33 个格式按族组织，族基类装布局规则和转换，具体格式只填分量顺序和命名：
 
 | 族基类 | 文件 | 具体格式 |
 | --- | --- | --- |
@@ -141,7 +141,7 @@ QString describePixel(...) const;                  // 像素探针
 | `PlanarYuv422Decoder` | `yuvdecoders.cpp` | I422, YV16 |
 | `SemiPlanarYuv422Decoder` | `yuvdecoders.cpp` | NV16, NV61 |
 | `PlanarYuv444Decoder` | `yuvdecoders.cpp` | I444, YV24 |
-| `SemiPlanarYuv444Decoder` | `yuvdecoders.cpp` | NV24 |
+| `SemiPlanarYuv444Decoder` | `yuvdecoders.cpp` | NV24, NV42 |
 | `PackedRgbDecoder` | `rgbdecoders.cpp` | RGB888, BGR888, RGBA8888, RGBX8888, BGRA8888, BGRX8888, RGB565, BGR565, RGB555, BGR555 |
 | `PackedRgb16Decoder` | `rgbdecoders.cpp` | RGB48, RGBA64 |
 | （直接继承） | `rgbdecoders.cpp` | Y8 |
