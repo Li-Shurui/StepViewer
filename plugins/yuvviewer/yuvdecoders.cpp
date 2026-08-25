@@ -1196,6 +1196,127 @@ protected:
     bool chromaOrderIsUV() const override { return false; }
 };
 
+// Shared implementation for packed (interleaved) YUV 4:4:4 formats: a
+// single plane whose pixels carry all of their own components, so there
+// is neither subsampling nor a second plane and every pixel is
+// independent. Only the component order, the pixel size and the presence
+// of an alpha byte differ between them.
+class PackedYuv444Decoder : public RawImageDecoder
+{
+public:
+    LayoutResult validateLayout(const RawImageLayout &layout) const override
+    {
+        return validateYuv444Layout(*this, layout, bytesPerPixel());
+    }
+
+    qint64 expectedByteSize(const RawImageLayout &layout) const override
+    {
+        // stride is in bytes and already includes bytesPerPixel().
+        return qint64(layout.stride) * qint64(layout.scanline);
+    }
+
+    int defaultStride(int width) const override { return width * bytesPerPixel(); }
+
+    ImageResult convertToImage(const QByteArray &data,
+                               const RawImageLayout &layout) const override
+    {
+        return runConversion(*this, [&]() -> ImageResult {
+            auto *pixels = reinterpret_cast<uchar *>(const_cast<char *>(data.constData()));
+            cv::Mat packed(layout.height, layout.width,
+                           CV_MAKETYPE(CV_8U, bytesPerPixel()), pixels,
+                           static_cast<size_t>(layout.stride));
+
+            // OpenCV has no packed 4:4:4 conversion, so the components are
+            // deinterleaved and reordered into a plain three-channel YUV
+            // image. components[] is sized for the widest pixel here.
+            cv::Mat components[4];
+            cv::split(packed, components);
+            const auto offsets = componentOffsets();
+            const cv::Mat yuvPlanes[3] = {components[offsets[0]],
+                                          components[offsets[1]],
+                                          components[offsets[2]]};
+            cv::Mat yuv;
+            cv::merge(yuvPlanes, 3, yuv);
+
+            // OpenCV's three-channel YUV conversion has no RGBA variant.
+            cv::Mat rgb;
+            cv::cvtColor(yuv, rgb, cv::COLOR_YUV2RGB);
+            if (alphaOffset() < 0)
+                return rgbaMatToImage(rgb, layout, QImage::Format_RGB888);
+
+            // Alpha passes through untouched: it is not a color component,
+            // so it is put back only after the color conversion.
+            cv::Mat rgbPlanes[3];
+            cv::split(rgb, rgbPlanes);
+            const cv::Mat rgbaPlanes[4] = {rgbPlanes[0], rgbPlanes[1], rgbPlanes[2],
+                                           components[alphaOffset()]};
+            cv::Mat rgba;
+            cv::merge(rgbaPlanes, 4, rgba);
+            return rgbaMatToImage(rgba, layout);
+        });
+    }
+
+    QStringList planeNames() const override
+    {
+        QStringList names{QStringLiteral("Y"), QStringLiteral("U"), QStringLiteral("V")};
+        if (alphaOffset() >= 0)
+            names << QStringLiteral("A");
+        return names;
+    }
+
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const override
+    {
+        if (plane < 0 || plane >= planeNames().size())
+            return invalidPlane(plane);
+
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const int offset = plane == 3 ? alphaOffset() : componentOffsets()[plane];
+        return stridedPlane(pixels, layout.width, layout.height, layout.stride,
+                            bytesPerPixel(), offset);
+    }
+
+    QString describePixel(const QByteArray &data, const RawImageLayout &layout,
+                          int x, int y) const override
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        const auto offsets = componentOffsets();
+        const uchar *pixel = pixels + qint64(y) * layout.stride + x * bytesPerPixel();
+        const int luma = pixel[offsets[0]];
+        const int u = pixel[offsets[1]];
+        const int v = pixel[offsets[2]];
+        if (alphaOffset() >= 0)
+            return describeYuva(luma, u, v, pixel[alphaOffset()]);
+        return describeYuv(luma, u, v);
+    }
+
+protected:
+    // 3 for YUV444, 4 for AYUV. Must not exceed the size of components[]
+    // in convertToImage().
+    virtual int bytesPerPixel() const = 0;
+    // Byte offsets of Y, U and V inside one pixel.
+    virtual std::array<int, 3> componentOffsets() const = 0;
+    // Byte offset of the alpha component, or -1 if the format has none.
+    virtual int alphaOffset() const { return -1; }
+};
+
+class Yuv444Decoder final : public PackedYuv444Decoder
+{
+public:
+    QLatin1StringView id() const override { return "yuv444"_L1; }
+    QString displayName() const override { return QStringLiteral("YUV444"); }
+    QString mimeType() const override { return "video/x-raw-yuv444"_L1; }
+    QStringList fileExtensions() const override
+    {
+        // Not "yuv444p": that names the planar arrangement, which is I444.
+        return {"yuv444"_L1, "YUV444"_L1, "iyu2"_L1, "IYU2"_L1, "v308"_L1, "V308"_L1};
+    }
+
+protected:
+    int bytesPerPixel() const override { return 3; }
+    std::array<int, 3> componentOffsets() const override { return {0, 1, 2}; }
+};
+
 } // namespace
 
 QList<const RawImageDecoder *> RawImageDecoders::createYuvDecoders()
@@ -1221,5 +1342,6 @@ QList<const RawImageDecoder *> RawImageDecoders::createYuvDecoders()
         new Yv24Decoder,
         new Nv24Decoder,
         new Nv42Decoder,
+        new Yuv444Decoder,
     };
 }
