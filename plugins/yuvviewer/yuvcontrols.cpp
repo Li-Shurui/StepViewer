@@ -43,8 +43,11 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
 
     m_formatLabel = new QLabel(toolBar);
     m_formatComboBox = new QComboBox(toolBar);
-    for (const RawImageDecoder *decoder : RawImageDecoders::all())
+    for (const RawImageDecoder *decoder : RawImageDecoders::all()) {
         m_formatComboBox->addItem(decoder->displayName());
+        m_formatComboBox->setMinimumContentsLength(12);
+        m_formatComboBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    }
 
     m_planeLabel = new QLabel(toolBar);
     m_planeComboBox = new QComboBox(toolBar);
