@@ -548,7 +548,7 @@ protected:
 
 // Shared implementation for packed (interleaved) YUV 4:2:2 formats:
 // a single plane of two-pixel macropixels, four bytes each. Only the
-// component order inside the macropixel (YUYV, UYVY, YVYU) differs.
+// component order inside the macropixel (YUYV, UYVY, YVYU, VYUY) differs.
 class PackedYuv422Decoder : public RawImageDecoder
 {
     Q_DECLARE_TR_FUNCTIONS(PackedYuv422Decoder)
@@ -689,6 +689,48 @@ public:
 protected:
     int conversionCode() const override { return cv::COLOR_YUV2RGBA_YVYU; }
     std::array<int, 3> componentOffsets() const override { return {0, 3, 1}; }
+};
+
+class VyuyDecoder final : public PackedYuv422Decoder
+{
+public:
+    QLatin1StringView id() const override { return "vyuy"_L1; }
+    QString displayName() const override { return QStringLiteral("VYUY"); }
+    QString mimeType() const override { return "video/x-raw-vyuy"_L1; }
+    QStringList fileExtensions() const override { return {"vyuy"_L1, "VYUY"_L1}; }
+
+    ImageResult convertToImage(const QByteArray &data,
+                               const RawImageLayout &layout) const override
+    {
+        // OpenCV comments COLOR_YUV2RGBA_VYUY out and does not implement
+        // it. VYUY is UYVY with U and V swapped (V Y U Y -> U Y V Y).
+        return runConversion(*this, [&]() -> ImageResult {
+            QByteArray uyvy(qint64(layout.stride) * layout.height, Qt::Uninitialized);
+            const auto *src = reinterpret_cast<const uchar *>(data.constData());
+            auto *converted = reinterpret_cast<uchar *>(uyvy.data());
+            for (int row = 0; row < layout.height; ++row) {
+                const uchar *s = src + qint64(row) * layout.stride;
+                uchar *d = converted + qint64(row) * layout.stride;
+                memcpy(d, s, static_cast<size_t>(layout.stride));
+                for (int col = 0; col < layout.width; col += 2) {
+                    const uchar v = d[0];
+                    d[0] = d[2];
+                    d[2] = v;
+                    d += 4;
+                }
+            }
+            cv::Mat yuv(layout.height, layout.width, CV_8UC2, converted,
+                        static_cast<size_t>(layout.stride));
+            cv::Mat rgba;
+            cv::cvtColor(yuv, rgba, cv::COLOR_YUV2RGBA_UYVY);
+            return rgbaMatToImage(rgba, layout);
+        });
+    }
+
+protected:
+    // Unused: convertToImage() is overridden. Kept to satisfy the base.
+    int conversionCode() const override { return cv::COLOR_YUV2RGBA_UYVY; }
+    std::array<int, 3> componentOffsets() const override { return {1, 2, 0}; }
 };
 
 // Shared implementation for three-plane (planar) YUV 4:2:2 formats:
@@ -1077,6 +1119,7 @@ QList<const RawImageDecoder *> RawImageDecoders::createYuvDecoders()
         new Yuy2Decoder,
         new UyvyDecoder,
         new YvyuDecoder,
+        new VyuyDecoder,
         new I422Decoder,
         new Yv16Decoder,
         new Nv16Decoder,

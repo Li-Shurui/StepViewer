@@ -137,7 +137,7 @@ QString describePixel(...) const;                  // 像素探针
 | `SemiPlanarYuv420p16Decoder` | `yuvdecoders.cpp` | P010, P016 |
 | `PlanarYuv420Decoder` | `yuvdecoders.cpp` | I420, YV12 |
 | `PlanarYuv420p16Decoder` | `yuvdecoders.cpp` | I010, I016 |
-| `PackedYuv422Decoder` | `yuvdecoders.cpp` | YUY2, UYVY, YVYU |
+| `PackedYuv422Decoder` | `yuvdecoders.cpp` | YUY2, UYVY, YVYU, VYUY |
 | `PlanarYuv422Decoder` | `yuvdecoders.cpp` | I422, YV16 |
 | `SemiPlanarYuv422Decoder` | `yuvdecoders.cpp` | NV16, NV61 |
 | `PlanarYuv444Decoder` | `yuvdecoders.cpp` | I444, YV24 |
