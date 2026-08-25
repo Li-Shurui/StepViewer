@@ -16,6 +16,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFont>
 #include <QFrame>
 #include <QIcon>
 #include <QImage>
@@ -280,36 +281,97 @@ QImage computeHistogramImage(const RawImageDecoder *decoder, const QByteArray &d
     if (channels.isEmpty())
         return {};
 
+    const auto formatCount = [](quint32 count) {
+        if (count >= 1000000)
+            return QString::number(count / 1000000.0, 'f', 1) + QLatin1Char('M');
+        if (count >= 10000)
+            return QString::number(count / 1000.0, 'f', 1) + QLatin1Char('k');
+        return QLocale().toString(count);
+    };
+
     const int margin = 8;
+    const int leftAxis = 64;
+    const int bottomAxis = 36;
     const int plotWidth = 512;
     const int plotHeight = 120;
     const int labelHeight = 20;
-    const int rowHeight = labelHeight + plotHeight + margin;
-    QImage image(margin * 2 + plotWidth, margin + channels.size() * rowHeight,
+    const int rowHeight = labelHeight + plotHeight + bottomAxis + margin;
+    QImage image(leftAxis + plotWidth + margin,
+                 margin + channels.size() * rowHeight,
                  QImage::Format_RGB32);
     image.fill(Qt::white);
 
     QPainter painter(&image);
+    const QFont titleFont = painter.font();
+    QFont tickFont = titleFont;
+    tickFont.setPointSizeF(qMax(7.0, tickFont.pointSizeF() - 1.0));
+
     for (int c = 0; c < channels.size(); ++c) {
         const Channel &channel = channels.at(c);
         const int top = margin + c * rowHeight;
+        const int plotLeft = leftAxis;
+        const int plotTop = top + labelHeight;
+        const int plotBottom = plotTop + plotHeight;
+        const auto yForCount = [&](quint32 count) {
+            if (channel.maxCount == 0)
+                return plotBottom;
+            return plotBottom - qRound(count * qreal(plotHeight) / channel.maxCount);
+        };
+
         painter.setPen(Qt::black);
-        painter.drawText(QRect(margin, top, plotWidth, labelHeight),
+        painter.drawText(QRect(plotLeft, top, plotWidth, labelHeight),
                          Qt::AlignLeft | Qt::AlignVCenter,
                          YuvViewer::tr("%1  (mean %2)")
                              .arg(channel.name)
                              .arg(channel.mean, 0, 'f', 1));
-        const int plotTop = top + labelHeight;
-        painter.setPen(QColor(180, 180, 180));
-        painter.drawRect(margin - 1, plotTop - 1, plotWidth + 1, plotHeight + 1);
+
+        painter.fillRect(plotLeft, plotTop, plotWidth, plotHeight, QColor(248, 248, 248));
         painter.setPen(QPen(channel.color, 2));
         for (int bin = 0; bin < 256; ++bin) {
             const int height = channel.maxCount > 0
                 ? qRound(channel.bins[bin] * qreal(plotHeight) / channel.maxCount)
                 : 0;
-            const int x = margin + bin * 2 + 1;
-            painter.drawLine(x, plotTop + plotHeight, x, plotTop + plotHeight - height);
+            const int x = plotLeft + bin * 2;
+            painter.drawLine(x, plotBottom, x, plotBottom - height);
         }
+
+        painter.setPen(QColor(80, 80, 80));
+        painter.drawLine(plotLeft, plotBottom, plotLeft + plotWidth, plotBottom);
+        painter.drawLine(plotLeft, plotTop, plotLeft, plotBottom);
+
+        painter.setFont(tickFont);
+        static const int xTicks[] = {0, 64, 128, 192, 255};
+        for (int value : xTicks) {
+            const int x = plotLeft + value * 2;
+            painter.drawLine(x, plotBottom, x, plotBottom + 4);
+            painter.drawText(QRect(x - 18, plotBottom + 5, 36, 14),
+                             Qt::AlignHCenter | Qt::AlignTop,
+                             QString::number(value));
+        }
+        painter.drawText(QRect(plotLeft, plotBottom + 18, plotWidth, 16),
+                         Qt::AlignHCenter | Qt::AlignTop,
+                         YuvViewer::tr("Value"));
+
+        QList<quint32> yTicks{0};
+        if (channel.maxCount > 1)
+            yTicks.append(channel.maxCount / 2);
+        if (channel.maxCount > 0)
+            yTicks.append(channel.maxCount);
+        for (quint32 count : std::as_const(yTicks)) {
+            const int y = yForCount(count);
+            painter.drawLine(plotLeft - 4, y, plotLeft, y);
+            painter.drawText(QRect(16, y - 8, plotLeft - 22, 16),
+                             Qt::AlignRight | Qt::AlignVCenter,
+                             formatCount(count));
+        }
+        painter.save();
+        painter.translate(10, (plotTop + plotBottom) / 2);
+        painter.rotate(-90);
+        painter.drawText(QRect(-plotHeight / 2, -8, plotHeight, 16),
+                         Qt::AlignCenter,
+                         YuvViewer::tr("Count"));
+        painter.restore();
+        painter.setFont(titleFont);
     }
     return image;
 }
