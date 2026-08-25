@@ -33,8 +33,9 @@ frameCount = fileSize / frameSize                // 必须整除
 - `RawImageDecoder::readData()` 新增 `frameIndex` 参数
   （`plugins/yuvviewer/rawimagedecoder.cpp`），原有的两个重载保留，
   默认读第 0 帧，其它调用方不受影响。
-- `YuvViewer::updateFrameUi()` 在每次 `reload()` 前根据当前布局和文件大小
-  重新计算帧数，更新数字框范围与启用状态（用 `QSignalBlocker` 避免递归触发）。
+- 每次 `reload()` 前由 `RawImageFrame::count()` 根据当前布局和文件大小
+  重新计算帧数，再交给 `YuvControls::setFrameCount()` 更新数字框范围与
+  启用状态（用 `QSignalBlocker` 避免递归触发）。
 - 信息页新增"帧大小 / 文件大小 / 帧数"三行
   （此前"文件大小"实际显示的是单帧大小，已修正）。
 - `saveState()` / `restoreState()` 追加保存帧号；旧版本保存的状态没有该字段，
