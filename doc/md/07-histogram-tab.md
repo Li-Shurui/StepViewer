@@ -22,8 +22,8 @@
 
 统计与渲染都发生在加载的工作线程里：
 
-- `computeHistogramImage()` 在 `reload()` 的 worker 中调用，
-  结果作为 `LoadedFrame::histogram` 一并返回；
+- `RawImageHistogram::render()`（`plugins/yuvviewer/rawimagehistogram.cpp`）
+  在 `reload()` 的 worker 中调用，结果作为 `LoadedFrame::histogram` 一并返回；
 - `QPainter` 绘制 `QImage` 在线程间是安全的（只有 `QPixmap` 必须在
   GUI 线程），UI 线程的 done 回调只做一次 `QPixmap::fromImage`；
 - 切换平面视图不会重算直方图（直方图描述的是整帧，与视图无关）。

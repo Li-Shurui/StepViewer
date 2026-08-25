@@ -18,7 +18,7 @@
 
 此前用 `QLabel::setScaledContents(true)` + `setFixedSize()` 实现缩放，
 缩放滤波方式不可控，也无法叠加网格。新控件 `YuvImageWidget`
-（`plugins/yuvviewer/yuvviewer.cpp`，基于 `QFrame`）自行绘制：
+（`plugins/yuvviewer/yuvimagewidget.cpp`，基于 `QFrame`）自行绘制：
 
 - `paintEvent()` 里 `QPainter::drawImage(targetRect, image)`，
   用 `QPainter::SmoothPixmapTransform` 渲染提示切换平滑/最近邻；

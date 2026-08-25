@@ -63,7 +63,14 @@ endif()
 qt_add_plugin(yuvviewer
     CLASS_NAME YuvViewer
     yuvviewer.cpp yuvviewer.h
-    rawimagedecoder.cpp rawimagedecoder.h
+    yuvcontrols.cpp yuvcontrols.h
+    yuvimagewidget.cpp yuvimagewidget.h
+    rawimagedecoder.cpp rawimagedecoder.h rawimagedecoder_p.h
+    yuvdecoders.cpp
+    rgbdecoders.cpp
+    rawimagefilename.cpp rawimagefilename.h
+    rawimageframe.cpp rawimageframe.h
+    rawimagehistogram.cpp rawimagehistogram.h
 )
 
 set_target_properties(yuvviewer PROPERTIES

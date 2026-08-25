@@ -4,11 +4,15 @@
 #include "yuvviewer.h"
 
 #include "rawimagedecoder.h"
+#include "rawimagefilename.h"
+#include "rawimageframe.h"
+#include "rawimagehistogram.h"
+#include "yuvcontrols.h"
+#include "yuvimagewidget.h"
 
 #include <opencv2/core.hpp>
 
 #include <QAction>
-#include <QComboBox>
 #include <QDataStream>
 #include <QDebug>
 #include <QDir>
@@ -16,204 +20,27 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QFont>
 #include <QFrame>
 #include <QIcon>
-#include <QImage>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLocale>
 #include <QMouseEvent>
-#include <QPaintEvent>
-#include <QPainter>
-#include <QPen>
 #include <QPixmap>
-#include <QRegularExpression>
-#include <QSignalBlocker>
-#include <QSpinBox>
 #include <QStatusBar>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QToolBar>
 
-#include <climits>
-#include <array>
-#include <expected>
-#include <limits>
+#include <exception>
 #include <new>
-#include <optional>
-#include <stdexcept>
 #include <utility>
 
 using namespace Qt::StringLiterals;
 
 namespace {
-constexpr int minimumDimension = RawImageDecoder::minimumDimension;
-constexpr int maximumDimension = RawImageDecoder::maximumDimension;
 
-using OptionalLayoutResult = std::expected<std::optional<RawImageLayout>, QString>;
-using FileNameMetadata = QList<QPair<QString, QString>>;
-
-std::expected<int, QString> capturedInteger(const QRegularExpressionMatch &match, int index,
-                                            const QString &fieldName)
-{
-    bool ok = false;
-    const int value = match.captured(index).toInt(&ok);
-    if (!ok) {
-        return std::unexpected(YuvViewer::tr("Invalid %1 value \"%2\" in the file name.")
-                                   .arg(fieldName, match.captured(index)));
-    }
-    return value;
-}
-
-FileNameMetadata metadataFromFileName(const QString &fileName)
-{
-    const QString baseName = QFileInfo(fileName).completeBaseName();
-    static const QRegularExpression pipelinePattern(
-        QStringLiteral(R"((?:^|_)p\[([^\]]+)\])"),
-        QRegularExpression::CaseInsensitiveOption);
-    if (!pipelinePattern.match(baseName).hasMatch())
-        return {};
-
-    static const QRegularExpression tagPattern(
-        QStringLiteral(R"((?:^|_)([A-Za-z][A-Za-z0-9]*)\[([^\]]*)\])"));
-
-    FileNameMetadata metadata;
-    auto matches = tagPattern.globalMatch(baseName);
-    while (matches.hasNext()) {
-        const QRegularExpressionMatch match = matches.next();
-        QString key = match.captured(1);
-        const QString value = match.captured(2);
-
-        if (key.compare(QStringLiteral("p"), Qt::CaseInsensitive) == 0) {
-            key = QStringLiteral("pipeline");
-        } else if (key.compare(QStringLiteral("port"), Qt::CaseInsensitive) == 0
-                   && baseName.left(match.capturedStart(1))
-                          .endsWith(QStringLiteral("[out]_"), Qt::CaseInsensitive)) {
-            key = QStringLiteral("output");
-        } else if (key.compare(QStringLiteral("w"), Qt::CaseInsensitive) == 0) {
-            key = QStringLiteral("width");
-        } else if (key.compare(QStringLiteral("h"), Qt::CaseInsensitive) == 0) {
-            key = QStringLiteral("height");
-        }
-
-        metadata.append(qMakePair(key, value));
-    }
-    return metadata;
-}
-
-OptionalLayoutResult layoutFromFileName(const QString &fileName, const RawImageDecoder &decoder)
-{
-    const QString baseName = QFileInfo(fileName).completeBaseName();
-    static const QRegularExpression taggedPattern(
-        QStringLiteral(R"((?:^|_)w\[(\d+)\]_h\[(\d+)\](?:_stride\[(\d+)\])?(?:_scanline\[(\d+)\])?)"),
-        QRegularExpression::CaseInsensitiveOption);
-
-    const QRegularExpressionMatch taggedMatch = taggedPattern.match(baseName);
-    if (taggedMatch.hasMatch()) {
-        const auto width = capturedInteger(taggedMatch, 1, YuvViewer::tr("width"));
-        if (!width)
-            return std::unexpected(width.error());
-        const auto height = capturedInteger(taggedMatch, 2, YuvViewer::tr("height"));
-        if (!height)
-            return std::unexpected(height.error());
-
-        const auto stride = taggedMatch.captured(3).isEmpty()
-            ? std::expected<int, QString>(decoder.defaultStride(*width))
-            : capturedInteger(taggedMatch, 3, YuvViewer::tr("stride"));
-        if (!stride)
-            return std::unexpected(stride.error());
-        const auto scanline = taggedMatch.captured(4).isEmpty()
-            ? std::expected<int, QString>(*height)
-            : capturedInteger(taggedMatch, 4, YuvViewer::tr("scanline"));
-        if (!scanline)
-            return std::unexpected(scanline.error());
-
-        const auto layout = decoder.validateLayout({*width, *height, *stride, *scanline});
-        if (!layout)
-            return std::unexpected(layout.error());
-        return std::optional<RawImageLayout>(*layout);
-    }
-
-    if (baseName.contains(QStringLiteral("_w["), Qt::CaseInsensitive)
-        || baseName.contains(QStringLiteral("_h["), Qt::CaseInsensitive)) {
-        return std::unexpected(YuvViewer::tr(
-            "The file name contains incomplete image metadata. Expected "
-            "\"_w[width]_h[height]_stride[stride]_scanline[scanline]\"."));
-    }
-
-    static const QRegularExpression dimensionsPattern(QStringLiteral(R"((\d+)[xX](\d+))"));
-    auto matches = dimensionsPattern.globalMatch(baseName);
-    QRegularExpressionMatch lastMatch;
-    while (matches.hasNext())
-        lastMatch = matches.next();
-
-    if (!lastMatch.hasMatch())
-        return std::optional<RawImageLayout>();
-
-    const auto width = capturedInteger(lastMatch, 1, YuvViewer::tr("width"));
-    if (!width)
-        return std::unexpected(width.error());
-    const auto height = capturedInteger(lastMatch, 2, YuvViewer::tr("height"));
-    if (!height)
-        return std::unexpected(height.error());
-
-    const auto layout = decoder.validateLayout(
-        {*width, *height, decoder.defaultStride(*width), *height});
-    if (!layout)
-        return std::unexpected(layout.error());
-    return std::optional<RawImageLayout>(*layout);
-}
-
-// Number of whole frames of the given layout in a file of fileSize bytes;
-// 0 if the file size is not a positive multiple of the frame size.
-qint64 frameCount(const RawImageDecoder &decoder, const RawImageLayout &layout,
-                  qint64 fileSize)
-{
-    const qint64 frameSize = decoder.expectedByteSize(layout);
-    if (frameSize <= 0 || fileSize < frameSize || (fileSize % frameSize) != 0)
-        return 0;
-    return fileSize / frameSize;
-}
-
-// Renders the composite image (plane < 0) or a single component plane.
-std::expected<void, QString> validateFrameData(const RawImageDecoder *decoder,
-                                               const QByteArray &data,
-                                               const RawImageLayout &layout)
-{
-    if (!decoder)
-        return std::unexpected(YuvViewer::tr("No decoder is available for the loaded image."));
-
-    const qint64 expectedSize = decoder->expectedByteSize(layout);
-    if (expectedSize <= 0) {
-        return std::unexpected(YuvViewer::tr(
-            "The selected format produced an invalid frame size."));
-    }
-    if (data.size() != expectedSize) {
-        return std::unexpected(YuvViewer::tr(
-            "Loaded data size (%1 bytes) does not match the %2 frame size (%3 bytes). "
-            "The format may have changed while the image was loading.")
-                                   .arg(data.size())
-                                   .arg(decoder->displayName())
-                                   .arg(expectedSize));
-    }
-    return {};
-}
-
-RawImageDecoder::ImageResult renderImage(const RawImageDecoder *decoder,
-                                         const QByteArray &data,
-                                         const RawImageLayout &layout, int plane)
-{
-    const auto validData = validateFrameData(decoder, data, layout);
-    if (!validData)
-        return std::unexpected(validData.error());
-
-    if (plane < 0)
-        return decoder->convertToImage(data, layout);
-    return decoder->extractPlane(data, layout, plane);
-}
-
-// One loaded frame: the raw samples plus the rendered view of them.
+// One loaded frame: the raw samples plus the rendered views of them.
 struct LoadedFrame
 {
     QByteArray data;
@@ -222,283 +49,14 @@ struct LoadedFrame
 };
 using LoadResult = std::expected<LoadedFrame, QString>;
 
-QColor planeColor(const QString &planeName)
-{
-    if (planeName == "Y"_L1)
-        return QColor(90, 90, 90);
-    if (planeName == "U"_L1)
-        return QColor(70, 70, 220);
-    if (planeName == "V"_L1)
-        return QColor(220, 70, 70);
-    if (planeName == "R"_L1)
-        return QColor(220, 40, 40);
-    if (planeName == "G"_L1)
-        return QColor(40, 170, 40);
-    if (planeName == "B"_L1)
-        return QColor(60, 60, 230);
-    return QColor(150, 150, 150);  // A / X
-}
+constexpr qreal zoomInStep = 1.25;
+constexpr qreal zoomOutStep = 0.8;
+// How far the initial (fit) scale may be exceeded or undercut.
+constexpr qreal zoomRange = 3;
 
-// Computes per-plane 256-bin histograms from the raw frame and renders
-// them into an image. Runs on the worker thread; painting on a QImage
-// is safe off the GUI thread.
-QImage computeHistogramImage(const RawImageDecoder *decoder, const QByteArray &data,
-                             const RawImageLayout &layout)
-{
-    struct Channel
-    {
-        QString name;
-        QColor color;
-        std::array<quint32, 256> bins{};
-        quint32 maxCount = 0;
-        double mean = 0;
-    };
-
-    QList<Channel> channels;
-    const QStringList planes = decoder->planeNames();
-    for (int i = 0; i < planes.size(); ++i) {
-        const auto planeImage = decoder->extractPlane(data, layout, i);
-        if (!planeImage)
-            continue;
-
-        Channel channel;
-        channel.name = planes.at(i);
-        channel.color = planeColor(channel.name);
-        quint64 sum = 0;
-        for (int row = 0; row < planeImage->height(); ++row) {
-            const uchar *line = planeImage->constScanLine(row);
-            for (int col = 0; col < planeImage->width(); ++col)
-                ++channel.bins[line[col]];
-        }
-        for (int bin = 0; bin < 256; ++bin) {
-            channel.maxCount = qMax(channel.maxCount, channel.bins[bin]);
-            sum += quint64(bin) * channel.bins[bin];
-        }
-        const qint64 pixelCount = qint64(planeImage->width()) * planeImage->height();
-        channel.mean = pixelCount > 0 ? double(sum) / double(pixelCount) : 0;
-        channels.append(channel);
-    }
-    if (channels.isEmpty())
-        return {};
-
-    const auto formatCount = [](quint32 count) {
-        if (count >= 1000000)
-            return QString::number(count / 1000000.0, 'f', 1) + QLatin1Char('M');
-        if (count >= 10000)
-            return QString::number(count / 1000.0, 'f', 1) + QLatin1Char('k');
-        return QLocale().toString(count);
-    };
-
-    const int margin = 8;
-    const int leftAxis = 64;
-    const int bottomAxis = 36;
-    const int plotWidth = 512;
-    const int plotHeight = 120;
-    const int labelHeight = 20;
-    const int rowHeight = labelHeight + plotHeight + bottomAxis + margin;
-    QImage image(leftAxis + plotWidth + margin,
-                 margin + channels.size() * rowHeight,
-                 QImage::Format_RGB32);
-    image.fill(Qt::white);
-
-    QPainter painter(&image);
-    const QFont titleFont = painter.font();
-    QFont tickFont = titleFont;
-    tickFont.setPointSizeF(qMax(7.0, tickFont.pointSizeF() - 1.0));
-
-    for (int c = 0; c < channels.size(); ++c) {
-        const Channel &channel = channels.at(c);
-        const int top = margin + c * rowHeight;
-        const int plotLeft = leftAxis;
-        const int plotTop = top + labelHeight;
-        const int plotBottom = plotTop + plotHeight;
-        const auto yForCount = [&](quint32 count) {
-            if (channel.maxCount == 0)
-                return plotBottom;
-            return plotBottom - qRound(count * qreal(plotHeight) / channel.maxCount);
-        };
-
-        painter.setPen(Qt::black);
-        painter.drawText(QRect(plotLeft, top, plotWidth, labelHeight),
-                         Qt::AlignLeft | Qt::AlignVCenter,
-                         YuvViewer::tr("%1  (mean %2)")
-                             .arg(channel.name)
-                             .arg(channel.mean, 0, 'f', 1));
-
-        painter.fillRect(plotLeft, plotTop, plotWidth, plotHeight, QColor(248, 248, 248));
-        painter.setPen(QPen(channel.color, 2));
-        for (int bin = 0; bin < 256; ++bin) {
-            const int height = channel.maxCount > 0
-                ? qRound(channel.bins[bin] * qreal(plotHeight) / channel.maxCount)
-                : 0;
-            const int x = plotLeft + bin * 2;
-            painter.drawLine(x, plotBottom, x, plotBottom - height);
-        }
-
-        painter.setPen(QColor(80, 80, 80));
-        painter.drawLine(plotLeft, plotBottom, plotLeft + plotWidth, plotBottom);
-        painter.drawLine(plotLeft, plotTop, plotLeft, plotBottom);
-
-        painter.setFont(tickFont);
-        static const int xTicks[] = {0, 64, 128, 192, 255};
-        for (int value : xTicks) {
-            const int x = plotLeft + value * 2;
-            painter.drawLine(x, plotBottom, x, plotBottom + 4);
-            painter.drawText(QRect(x - 18, plotBottom + 5, 36, 14),
-                             Qt::AlignHCenter | Qt::AlignTop,
-                             QString::number(value));
-        }
-        painter.drawText(QRect(plotLeft, plotBottom + 18, plotWidth, 16),
-                         Qt::AlignHCenter | Qt::AlignTop,
-                         YuvViewer::tr("Value"));
-
-        QList<quint32> yTicks{0};
-        if (channel.maxCount > 1)
-            yTicks.append(channel.maxCount / 2);
-        if (channel.maxCount > 0)
-            yTicks.append(channel.maxCount);
-        for (quint32 count : std::as_const(yTicks)) {
-            const int y = yForCount(count);
-            painter.drawLine(plotLeft - 4, y, plotLeft, y);
-            painter.drawText(QRect(16, y - 8, plotLeft - 22, 16),
-                             Qt::AlignRight | Qt::AlignVCenter,
-                             formatCount(count));
-        }
-        painter.save();
-        painter.translate(10, (plotTop + plotBottom) / 2);
-        painter.rotate(-90);
-        painter.drawText(QRect(-plotHeight / 2, -8, plotHeight, 16),
-                         Qt::AlignCenter,
-                         YuvViewer::tr("Count"));
-        painter.restore();
-        painter.setFont(titleFont);
-    }
-    return image;
-}
-}
-
-// Image display widget for the YUV viewer. Unlike a QLabel with
-// scaledContents, painting is fully controlled here: nearest-neighbor
-// vs. smooth scaling, a pixel grid at high zoom levels, and text
-// prompts when no image is loaded. The widget reports the scaled image
-// size as its size hint so the enclosing scroll area adds scroll bars.
-class YuvImageWidget : public QFrame
-{
-public:
-    explicit YuvImageWidget(QWidget *parent = nullptr) : QFrame(parent) {}
-
-    const QImage &image() const { return m_image; }
-    QRectF imageRect() const { return m_imageRect; }
-
-    void setImage(const QImage &image)
-    {
-        m_image = image;
-        updateGeometry();
-        update();
-    }
-
-    void setText(const QString &text)
-    {
-        m_text = text;
-        update();
-    }
-
-    void setScaleFactor(qreal scaleFactor)
-    {
-        if (qFuzzyCompare(m_scaleFactor, scaleFactor))
-            return;
-        m_scaleFactor = scaleFactor;
-        updateGeometry();
-        update();
-    }
-
-    void setSmoothScaling(bool smooth)
-    {
-        m_smoothScaling = smooth;
-        update();
-    }
-
-    void setPixelGrid(bool grid)
-    {
-        m_pixelGrid = grid;
-        update();
-    }
-
-    QSize sizeHint() const override
-    {
-        if (m_image.isNull())
-            return QFrame::sizeHint();
-        const QSizeF logical = QSizeF(m_image.size()) / devicePixelRatioF();
-        return (logical * m_scaleFactor).toSize() + QSize(2 * frameWidth(), 2 * frameWidth());
-    }
-
-protected:
-    void paintEvent(QPaintEvent *event) override
-    {
-        QFrame::paintEvent(event);
-        QPainter painter(this);
-        const QRectF area = contentsRect();
-
-        if (m_image.isNull()) {
-            if (!m_text.isEmpty())
-                painter.drawText(area, Qt::AlignCenter | Qt::TextWordWrap, m_text);
-            return;
-        }
-
-        const qreal dpr = devicePixelRatioF();
-        const QSizeF targetSize = QSizeF(m_image.size()) / dpr * m_scaleFactor;
-        // Center within the viewport while the image is smaller than it;
-        // once larger, the widget itself is resized to the target size.
-        const QPointF topLeft(area.x() + qMax<qreal>(0, (area.width() - targetSize.width()) / 2),
-                              area.y() + qMax<qreal>(0, (area.height() - targetSize.height()) / 2));
-        m_imageRect = QRectF(topLeft, targetSize);
-
-        painter.setRenderHint(QPainter::SmoothPixmapTransform, m_smoothScaling);
-        painter.drawImage(m_imageRect, m_image);
-
-        const qreal step = m_scaleFactor / dpr;  // widget pixels per image pixel
-        if (m_pixelGrid && step >= 4.0) {
-            QPen pen(QColor(128, 128, 128, 90));
-            pen.setCosmetic(true);
-            painter.setPen(pen);
-            const QRectF clip = event->rect();
-            const int firstCol = qMax(0, qFloor((clip.left() - topLeft.x()) / step));
-            const int lastCol = qMin(m_image.width(), qCeil((clip.right() - topLeft.x()) / step));
-            for (int col = firstCol; col <= lastCol; ++col) {
-                const qreal x = topLeft.x() + col * step;
-                painter.drawLine(QPointF(x, topLeft.y()),
-                                 QPointF(x, topLeft.y() + targetSize.height()));
-            }
-            const int firstRow = qMax(0, qFloor((clip.top() - topLeft.y()) / step));
-            const int lastRow = qMin(m_image.height(), qCeil((clip.bottom() - topLeft.y()) / step));
-            for (int row = firstRow; row <= lastRow; ++row) {
-                const qreal y = topLeft.y() + row * step;
-                painter.drawLine(QPointF(topLeft.x(), y),
-                                 QPointF(topLeft.x() + targetSize.width(), y));
-            }
-        }
-    }
-
-private:
-    QImage m_image;
-    QString m_text;
-    QRectF m_imageRect;
-    qreal m_scaleFactor = 1;
-    bool m_smoothScaling = false;
-    bool m_pixelGrid = true;
-};
+} // namespace
 
 YuvViewer::YuvViewer()
-    : m_reloadAction(new QAction(this)),
-      m_prevFrameAction(new QAction(this)),
-      m_nextFrameAction(new QAction(this)),
-      m_zoomInAction(new QAction(this)),
-      m_zoomOutAction(new QAction(this)),
-      m_resetZoomAction(new QAction(this)),
-      m_fitToWindowAction(new QAction(this)),
-      m_smoothScalingAction(new QAction(this)),
-      m_pixelGridAction(new QAction(this)),
-      m_exportAction(new QAction(this))
 {
     // OpenCV 4.12's MinGW AVX2 semi-planar YUV converters can fault on some
     // Windows systems instead of reporting an exception. Select the portable
@@ -506,49 +64,62 @@ YuvViewer::YuvViewer()
     cv::setUseOptimized(false);
 
     setTranslationBaseName("yuvviewer"_L1);
-
+    createActions();
     connect(this, &AbstractViewer::uiInitialized, this, &YuvViewer::setupYuvUi);
+}
 
-    m_reloadAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_R));
-    connect(m_reloadAction, &QAction::triggered, this, &YuvViewer::reload);
+YuvViewer::~YuvViewer() = default;
 
+void YuvViewer::createActions()
+{
+    const auto addAction = [this](QKeySequence shortcut) {
+        auto *action = new QAction(this);
+        action->setShortcut(shortcut);
+        return action;
+    };
+
+    m_reloadAction = addAction(QKeySequence(Qt::ControlModifier | Qt::Key_R));
+    connect(m_reloadAction, &QAction::triggered, this, &YuvViewer::requestReload);
+
+    m_prevFrameAction = addAction(QKeySequence(Qt::Key_PageUp));
     m_prevFrameAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::GoPrevious));
-    m_prevFrameAction->setShortcut(QKeySequence(Qt::Key_PageUp));
     connect(m_prevFrameAction, &QAction::triggered, this, [this] {
-        if (m_frameSpinBox)
-            m_frameSpinBox->stepDown();
+        if (m_controls)
+            m_controls->stepFrame(-1);
     });
 
+    m_nextFrameAction = addAction(QKeySequence(Qt::Key_PageDown));
     m_nextFrameAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::GoNext));
-    m_nextFrameAction->setShortcut(QKeySequence(Qt::Key_PageDown));
     connect(m_nextFrameAction, &QAction::triggered, this, [this] {
-        if (m_frameSpinBox)
-            m_frameSpinBox->stepUp();
+        if (m_controls)
+            m_controls->stepFrame(1);
     });
 
+    m_zoomInAction = addAction(QKeySequence::ZoomIn);
     m_zoomInAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::ZoomIn));
-    m_zoomInAction->setShortcut(QKeySequence::ZoomIn);
     connect(m_zoomInAction, &QAction::triggered, this, &YuvViewer::zoomIn);
 
+    m_zoomOutAction = addAction(QKeySequence::ZoomOut);
     m_zoomOutAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::ZoomOut));
-    m_zoomOutAction->setShortcut(QKeySequence::ZoomOut);
     connect(m_zoomOutAction, &QAction::triggered, this, &YuvViewer::zoomOut);
 
+    m_resetZoomAction = addAction(QKeySequence(Qt::ControlModifier | Qt::Key_0));
     m_resetZoomAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::ZoomFitBest));
-    m_resetZoomAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_0));
     connect(m_resetZoomAction, &QAction::triggered, this, &YuvViewer::resetZoom);
 
-    m_fitToWindowAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_9));
+    m_fitToWindowAction = addAction(QKeySequence(Qt::ControlModifier | Qt::Key_9));
     connect(m_fitToWindowAction, &QAction::triggered, this, &YuvViewer::fitToWindow);
 
     // Nearest-neighbor is the default: raw image inspection cares about
     // exact pixel values, not pretty interpolation.
+    m_smoothScalingAction = addAction({});
     m_smoothScalingAction->setCheckable(true);
     connect(m_smoothScalingAction, &QAction::toggled, this, [this](bool checked) {
         if (m_imageWidget)
             m_imageWidget->setSmoothScaling(checked);
     });
 
+    m_pixelGridAction = addAction({});
     m_pixelGridAction->setCheckable(true);
     m_pixelGridAction->setChecked(true);
     connect(m_pixelGridAction, &QAction::toggled, this, [this](bool checked) {
@@ -556,8 +127,8 @@ YuvViewer::YuvViewer()
             m_imageWidget->setPixelGrid(checked);
     });
 
+    m_exportAction = addAction(QKeySequence(Qt::ControlModifier | Qt::Key_E));
     m_exportAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::DocumentSaveAs));
-    m_exportAction->setShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_E));
     connect(m_exportAction, &QAction::triggered, this, &YuvViewer::exportImage);
 
     m_prevFrameAction->setEnabled(false);
@@ -569,8 +140,6 @@ YuvViewer::YuvViewer()
     m_exportAction->setEnabled(false);
 }
 
-YuvViewer::~YuvViewer() = default;
-
 void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
 {
     m_imageWidget = new YuvImageWidget(parent);
@@ -580,59 +149,42 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
 
     AbstractViewer::init(file, m_imageWidget, mainWindow);
 
-    QToolBar *toolBar = addToolBar();
-    m_widthLabel = new QLabel(toolBar);
-    m_widthSpinBox = new QSpinBox(toolBar);
-    m_widthSpinBox->setRange(minimumDimension, maximumDimension);
-    m_widthSpinBox->setSingleStep(2);
-    m_widthSpinBox->setValue(1920);
-    m_widthSpinBox->setKeyboardTracking(false);
+    setupToolBar();
 
-    m_heightLabel = new QLabel(toolBar);
-    m_heightSpinBox = new QSpinBox(toolBar);
-    m_heightSpinBox->setRange(minimumDimension, maximumDimension);
-    m_heightSpinBox->setSingleStep(2);
-    m_heightSpinBox->setValue(1080);
-    m_heightSpinBox->setKeyboardTracking(false);
-
-    m_formatLabel = new QLabel(toolBar);
-    m_formatComboBox = new QComboBox(toolBar);
-    for (const RawImageDecoder *decoder : RawImageDecoders::all())
-        m_formatComboBox->addItem(decoder->displayName());
-
-    m_decoder = RawImageDecoders::findByExtension(QFileInfo(file->fileName()).suffix());
+    // The file name is the only metadata a headerless file carries, so it
+    // decides both the initial format and the initial frame size.
+    const QString fileName = file->fileName();
+    m_decoder = RawImageDecoders::findByExtension(QFileInfo(fileName).suffix());
     if (!m_decoder)
         m_decoder = RawImageDecoders::defaultDecoder();
-    m_formatComboBox->setCurrentIndex(RawImageDecoders::all().indexOf(m_decoder));
-    connect(m_formatComboBox, &QComboBox::activated, this, &YuvViewer::onFormatChanged);
+    m_controls->setDecoder(m_decoder);
+    m_controls->rebuildPlanes();
+    m_controls->setFileSize(QFileInfo(fileName).size());
 
-    m_frameLabel = new QLabel(toolBar);
-    m_frameSpinBox = new QSpinBox(toolBar);
-    m_frameSpinBox->setRange(1, 1);
-    m_frameSpinBox->setKeyboardTracking(false);
-    m_frameSpinBox->setEnabled(false);
-    connect(m_frameSpinBox, &QSpinBox::valueChanged, this, &YuvViewer::reload);
-    m_frameCountLabel = new QLabel(toolBar);
+    m_fileLayout.reset();
+    m_metadataError.clear();
+    m_fileNameMetadata = RawImageFileName::metadata(fileName);
 
-    connect(m_widthSpinBox, &QSpinBox::valueChanged, this, &YuvViewer::updateFormatMatches);
-    connect(m_heightSpinBox, &QSpinBox::valueChanged, this, &YuvViewer::updateFormatMatches);
+    const auto parsedLayout = RawImageFileName::layout(fileName, *m_decoder);
+    if (!parsedLayout) {
+        m_metadataError = parsedLayout.error();
+    } else if (parsedLayout->has_value()) {
+        m_fileLayout = *parsedLayout;
+        m_controls->setImageSize(m_fileLayout->width, m_fileLayout->height);
+    }
 
-    m_planeLabel = new QLabel(toolBar);
-    m_planeComboBox = new QComboBox(toolBar);
-    updatePlaneCombo();
-    connect(m_planeComboBox, &QComboBox::activated, this, &YuvViewer::onPlaneChanged);
+    clear();
+    retranslate();
+}
 
-    toolBar->addWidget(m_widthLabel);
-    toolBar->addWidget(m_widthSpinBox);
-    toolBar->addWidget(m_heightLabel);
-    toolBar->addWidget(m_heightSpinBox);
-    toolBar->addWidget(m_formatLabel);
-    toolBar->addWidget(m_formatComboBox);
-    toolBar->addWidget(m_planeLabel);
-    toolBar->addWidget(m_planeComboBox);
-    toolBar->addWidget(m_frameLabel);
-    toolBar->addWidget(m_frameSpinBox);
-    toolBar->addWidget(m_frameCountLabel);
+void YuvViewer::setupToolBar()
+{
+    QToolBar *toolBar = addToolBar();
+    m_controls = new YuvControls(toolBar);
+    connect(m_controls, &YuvControls::formatSelected, this, &YuvViewer::onFormatSelected);
+    connect(m_controls, &YuvControls::planeSelected, this, &YuvViewer::onPlaneSelected);
+    connect(m_controls, &YuvControls::frameSelected, this, &YuvViewer::requestReload);
+
     toolBar->addAction(m_prevFrameAction);
     toolBar->addAction(m_nextFrameAction);
     toolBar->addAction(m_reloadAction);
@@ -646,29 +198,31 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
     toolBar->addAction(m_pixelGridAction);
     toolBar->addSeparator();
     toolBar->addAction(m_exportAction);
+}
 
-    m_hasFileLayout = false;
-    m_fileWidth = m_fileHeight = m_fileStride = m_fileScanline = 0;
-    m_fileNameMetadata = metadataFromFileName(file->fileName());
-    m_metadataError.clear();
+void YuvViewer::setupYuvUi()
+{
+    m_infoTable = addInfoTab(tr("Info"));
 
-    const auto parsedLayout = layoutFromFileName(file->fileName(), *m_decoder);
-    if (!parsedLayout) {
-        m_metadataError = parsedLayout.error();
-    } else if (parsedLayout->has_value()) {
-        const RawImageLayout &layout = parsedLayout->value();
-        m_hasFileLayout = true;
-        m_fileWidth = layout.width;
-        m_fileHeight = layout.height;
-        m_fileStride = layout.stride;
-        m_fileScanline = layout.scanline;
-        m_widthSpinBox->setValue(layout.width);
-        m_heightSpinBox->setValue(layout.height);
+    auto *histogram = new QLabel;
+    histogram->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    m_histogramLabel = histogram;
+    addTabPage(histogram, tr("Histogram"));
+
+    if (m_fileLayout) {
+        requestReload();
+        return;
     }
 
-    clear();
-    retranslate();
-    updateFormatMatches();
+    const QString prompt = tr("Enter the image width and height, then select Reload.");
+    if (!m_metadataError.isEmpty()) {
+        reportError(m_metadataError + u'\n' + prompt);
+        return;
+    }
+
+    if (m_imageWidget)
+        m_imageWidget->setText(prompt);
+    statusMessage(prompt, tr("open"));
 }
 
 QStringList YuvViewer::supportedMimeTypes() const
@@ -696,22 +250,27 @@ bool YuvViewer::hasContent() const
 
 QByteArray YuvViewer::saveState() const
 {
-    if (!m_widthSpinBox || !m_heightSpinBox)
+    // Called after cleanup() the controls are gone and there is nothing
+    // left to describe.
+    if (!m_controls)
         return {};
 
     QByteArray state;
     QDataStream stream(&state, QIODevice::WriteOnly);
     stream << QString(viewerName());
-    stream << m_widthSpinBox->value();
-    stream << m_heightSpinBox->value();
+    stream << m_controls->imageWidth();
+    stream << m_controls->imageHeight();
     stream << (m_decoder ? QString(m_decoder->id()) : QString());
-    stream << (m_frameSpinBox ? m_frameSpinBox->value() : 1);
-    stream << (m_planeComboBox ? m_planeComboBox->currentIndex() : 0);
+    stream << m_controls->frame();
+    stream << m_controls->plane() + 1;
     return state;
 }
 
 bool YuvViewer::restoreState(QByteArray &state)
 {
+    if (!m_controls)
+        return false;
+
     QDataStream stream(&state, QIODevice::ReadOnly);
     QString viewer;
     int width = 0;
@@ -720,8 +279,9 @@ bool YuvViewer::restoreState(QByteArray &state)
 
     if (stream.status() != QDataStream::Ok || viewer != viewerName())
         return false;
-    if (width < minimumDimension || width > maximumDimension
-        || height < minimumDimension || height > maximumDimension) {
+    if (width < RawImageDecoder::minimumDimension || width > RawImageDecoder::maximumDimension
+        || height < RawImageDecoder::minimumDimension
+        || height > RawImageDecoder::maximumDimension) {
         return false;
     }
 
@@ -730,7 +290,6 @@ bool YuvViewer::restoreState(QByteArray &state)
     if (!stream.atEnd())
         stream >> formatId;
 
-    bool formatChanged = false;
     const RawImageDecoder *extensionDecoder = m_file
         ? RawImageDecoders::findByExtension(QFileInfo(m_file->fileName()).suffix())
         : nullptr;
@@ -738,74 +297,51 @@ bool YuvViewer::restoreState(QByteArray &state)
         // A specific extension such as .Y8 or .NV12 is authoritative. The
         // saved format belongs to the previously opened file and must not
         // reinterpret data that is already loading for this file.
-        formatChanged = m_decoder != extensionDecoder;
         m_decoder = extensionDecoder;
-        if (m_formatComboBox)
-            m_formatComboBox->setCurrentIndex(RawImageDecoders::all().indexOf(extensionDecoder));
-    } else if (!formatId.isEmpty()) {
-        if (const RawImageDecoder *decoder = RawImageDecoders::findById(formatId)) {
-            formatChanged = m_decoder != decoder;
-            m_decoder = decoder;
-            if (m_formatComboBox)
-                m_formatComboBox->setCurrentIndex(RawImageDecoders::all().indexOf(decoder));
-        }
+    } else if (const RawImageDecoder *saved = RawImageDecoders::findById(formatId)) {
+        m_decoder = saved;
     }
+    m_controls->setDecoder(m_decoder);
+    m_controls->rebuildPlanes();  // the plane list depends on the format
 
     // States saved before multi-frame support end after the format id.
     int frame = 1;
     if (!stream.atEnd())
         stream >> frame;
-    if (m_frameSpinBox) {
-        const QSignalBlocker blocker(m_frameSpinBox);
-        m_frameSpinBox->setValue(qMax(1, frame));
-    }
+    m_controls->setFrame(frame);
 
     // States saved before plane-view support end after the frame number.
-    updatePlaneCombo();  // rebuild for the restored decoder
-    int plane = 0;
+    int planeIndex = 0;
     if (!stream.atEnd())
-        stream >> plane;
-    if (m_planeComboBox && plane > 0 && plane < m_planeComboBox->count()) {
-        const QSignalBlocker blocker(m_planeComboBox);
-        m_planeComboBox->setCurrentIndex(plane);
-    } else {
-        plane = 0;
-    }
+        stream >> planeIndex;
+    m_controls->setPlane(planeIndex - 1);
 
-    if (!m_hasFileLayout && m_metadataError.isEmpty()
-        && m_widthSpinBox && m_heightSpinBox) {
-        m_widthSpinBox->setValue(width);
-        m_heightSpinBox->setValue(height);
-        reload();
-    } else if (m_hasFileLayout && (formatChanged || frame > 1 || plane > 0)) {
-        // The initial reload in setupYuvUi() ran before the state was
-        // restored; reload again with the restored format, frame and plane.
-        reload();
-    }
+    // The file name wins over the saved size; without one, the size from
+    // the previous session is the best guess available.
+    if (!m_fileLayout && m_metadataError.isEmpty())
+        m_controls->setImageSize(width, height);
+
+    // setupYuvUi() may already have asked for a load; requestReload()
+    // collapses both requests into one read with the restored settings.
+    if (m_fileLayout || m_metadataError.isEmpty())
+        requestReload();
     return true;
 }
 
-void YuvViewer::setupYuvUi()
+void YuvViewer::requestReload()
 {
-    m_infoTable = addInfoTab(tr("Info"));
-
-    m_histogramLabel = new QLabel;
-    m_histogramLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    addTabPage(m_histogramLabel, tr("Histogram"));
-
-    if (m_hasFileLayout) {
-        reload();
+    if (m_reloadPending)
         return;
-    }
 
-    const QString prompt = tr("Enter the image width and height, then select Reload.");
-    if (!m_metadataError.isEmpty()) {
-        reportError(m_metadataError + QStringLiteral("\n") + prompt);
-        return;
-    }
-
-    m_imageWidget->setText(prompt);
-    statusMessage(prompt, tr("open"));
+    // Opening a file runs setupYuvUi() and restoreState() back to back,
+    // and both want to load. Deferring to the next event loop pass turns
+    // that into a single read of the file.
+    m_reloadPending = true;
+    QMetaObject::invokeMethod(this, [this] {
+        m_reloadPending = false;
+        if (m_file && m_controls)
+            reload();
+    }, Qt::QueuedConnection);
 }
 
 void YuvViewer::reload()
@@ -815,17 +351,19 @@ void YuvViewer::reload()
     // abort its read early instead of running to completion.
     cancelAsyncTasks();
 
-    if (!m_file || !m_widthSpinBox || !m_heightSpinBox || !m_decoder) {
+    if (!m_file || !m_controls || !m_decoder) {
         reportError(tr("The YUV viewer is not fully initialized."));
         return;
     }
 
-    const int width = m_widthSpinBox->value();
-    const int height = m_heightSpinBox->value();
+    const int width = m_controls->imageWidth();
+    const int height = m_controls->imageHeight();
     RawImageLayout requestedLayout{width, height, m_decoder->defaultStride(width), height};
-    if (m_hasFileLayout && width == m_fileWidth && height == m_fileHeight) {
-        requestedLayout.stride = m_fileStride;
-        requestedLayout.scanline = m_fileScanline;
+    // Padding from the file name only applies while the user keeps the
+    // frame size the name declared.
+    if (m_fileLayout && width == m_fileLayout->width && height == m_fileLayout->height) {
+        requestedLayout.stride = m_fileLayout->stride;
+        requestedLayout.scanline = m_fileLayout->scanline;
     }
 
     // Layout validation is cheap and stays synchronous; only file reading
@@ -844,12 +382,18 @@ void YuvViewer::reload()
     // A file holding a whole number of frames enables frame navigation.
     // A size mismatch is not rejected here: readData() reports it with
     // full layout details.
-    const qint64 frames = frameCount(*decoder, loadLayout, QFileInfo(fileName).size());
-    updateFrameUi(frames);
-    const qint64 frameIndex = frames > 0 ? qMin<qint64>(m_frameSpinBox->value() - 1, frames - 1) : 0;
-    const int plane = currentPlane();
+    const qint64 fileSize = QFileInfo(fileName).size();
+    const qint64 frames = RawImageFrame::count(*decoder, loadLayout, fileSize);
+    m_frameCount = qMax<qint64>(frames, 1);
+    m_controls->setFrameCount(m_frameCount);
+    m_prevFrameAction->setEnabled(m_frameCount > 1);
+    m_nextFrameAction->setEnabled(m_frameCount > 1);
 
-    m_imageWidget->setText(tr("Loading..."));
+    const qint64 frameIndex = frames > 0 ? qMin<qint64>(m_controls->frame() - 1, frames - 1) : 0;
+    const int plane = m_controls->plane();
+
+    if (m_imageWidget)
+        m_imageWidget->setText(tr("Loading..."));
 
     startAsyncTaskWithProgress<LoadResult>(
         [fileName, loadLayout, decoder, frameIndex, plane](QPromise<LoadResult> &promise) {
@@ -864,12 +408,12 @@ void YuvViewer::reload()
                     promise.addResult(LoadResult(std::unexpected(data.error())));
                     return;
                 }
-                auto image = renderImage(decoder, *data, loadLayout, plane);
+                auto image = RawImageFrame::render(decoder, *data, loadLayout, plane);
                 if (!image) {
                     promise.addResult(LoadResult(std::unexpected(image.error())));
                     return;
                 }
-                QImage histogram = computeHistogramImage(decoder, *data, loadLayout);
+                QImage histogram = RawImageHistogram::render(*decoder, *data, loadLayout);
                 promise.addResult(LoadedFrame{std::move(*data), std::move(*image),
                                               std::move(histogram)});
             } catch (const std::bad_alloc &) {
@@ -900,7 +444,8 @@ void YuvViewer::reload()
             displayImage(result->image);
             if (m_histogramLabel)
                 m_histogramLabel->setPixmap(QPixmap::fromImage(result->histogram));
-            updateInfoTab(fileName, loadLayout, decoder);
+            updateInfoTab(loadLayout, decoder);
+
             const QString fileDescription = tr("\"%1\", %2x%3, %4 (stride=%5, scanline=%6)")
                                                 .arg(QDir::toNativeSeparators(fileName))
                                                 .arg(loadLayout.width)
@@ -919,114 +464,49 @@ void YuvViewer::reload()
         });
 }
 
-void YuvViewer::updateFrameUi(qint64 frameCount)
-{
-    m_frameCount = qMax<qint64>(frameCount, 1);
-    if (!m_frameSpinBox)
-        return;
-
-    const QSignalBlocker blocker(m_frameSpinBox);
-    m_frameSpinBox->setMaximum(m_frameCount > INT_MAX ? INT_MAX : int(m_frameCount));
-    if (m_frameSpinBox->value() > m_frameSpinBox->maximum())
-        m_frameSpinBox->setValue(m_frameSpinBox->maximum());
-
-    const bool navigable = m_frameCount > 1;
-    m_frameSpinBox->setEnabled(navigable);
-    m_prevFrameAction->setEnabled(navigable);
-    m_nextFrameAction->setEnabled(navigable);
-    m_frameCountLabel->setText(QStringLiteral("/ %1").arg(m_frameCount));
-}
-
 void YuvViewer::cleanup()
 {
-    // The base class deletes the page widgets; drop the dangling pointers.
-    m_infoTable = nullptr;
-    m_histogramLabel = nullptr;
+    // A closed file must not keep its frame buffer alive: raw frames run
+    // into tens of megabytes and the viewer object is reused, not deleted.
+    releaseFrame();
+    m_image = QImage();
+    m_fileNameMetadata.clear();
+    m_fileLayout.reset();
+    m_metadataError.clear();
+    // The QPointer members go null on their own once the base class
+    // deletes the toolbar and the overview pages.
     AbstractViewer::cleanup();
+}
+
+void YuvViewer::releaseFrame()
+{
+    m_loadedDecoder = nullptr;
+    m_rawData = QByteArray();
+    m_layout = {};
 }
 
 void YuvViewer::busyChanged(bool busy)
 {
     AbstractViewer::busyChanged(busy);
-    if (m_reloadAction)
-        m_reloadAction->setEnabled(!busy);
+    m_reloadAction->setEnabled(!busy);
 }
 
-void YuvViewer::onFormatChanged()
+void YuvViewer::onFormatSelected()
 {
-    const int index = m_formatComboBox ? m_formatComboBox->currentIndex() : -1;
-    if (index >= 0)
-        m_decoder = RawImageDecoders::all().at(index);
-    updatePlaneCombo();
+    if (!m_controls)
+        return;
+
+    m_decoder = m_controls->decoder();
+    m_controls->rebuildPlanes();
 
     // Without a known layout the viewer still waits for width/height input.
-    if (m_hasFileLayout || hasContent())
-        reload();
+    if (m_fileLayout || hasContent())
+        requestReload();
 }
 
-void YuvViewer::updatePlaneCombo()
+void YuvViewer::onPlaneSelected()
 {
-    if (!m_planeComboBox)
-        return;
-
-    const QSignalBlocker blocker(m_planeComboBox);
-    m_planeComboBox->clear();
-    m_planeComboBox->addItem(tr("Composite"));
-    if (m_decoder)
-        m_planeComboBox->addItems(m_decoder->planeNames());
-    // Composite plus a single plane (e.g. Y8) offers nothing to switch.
-    m_planeComboBox->setEnabled(m_planeComboBox->count() > 2);
-}
-
-int YuvViewer::currentPlane() const
-{
-    // Combo index 0 is the composite view; planes are 0-based after it.
-    return m_planeComboBox ? m_planeComboBox->currentIndex() - 1 : -1;
-}
-
-// Highlights the formats whose tight frame size divides the file size
-// evenly. This inverts the usual workflow: with unknown data, set the
-// expected width/height and pick one of the matching (bold) formats.
-void YuvViewer::updateFormatMatches()
-{
-    if (!m_formatComboBox || !m_file || !m_widthSpinBox || !m_heightSpinBox)
-        return;
-
-    const qint64 fileSize = QFileInfo(m_file->fileName()).size();
-    const int width = m_widthSpinBox->value();
-    const int height = m_heightSpinBox->value();
-
-    const QList<const RawImageDecoder *> &decoders = RawImageDecoders::all();
-    const QFont normalFont = m_formatComboBox->font();
-    QFont boldFont = normalFont;
-    boldFont.setBold(true);
-
-    for (int i = 0; i < decoders.size(); ++i) {
-        const RawImageDecoder *decoder = decoders.at(i);
-        // The heuristic assumes a tightly packed layout; padded files
-        // (stride/scanline tags) intentionally do not match.
-        const RawImageLayout tight{width, height, decoder->defaultStride(width), height};
-
-        qint64 frames = 0;
-        if (decoder->validateLayout(tight)) {
-            const qint64 frameSize = decoder->expectedByteSize(tight);
-            if (frameSize > 0 && fileSize >= frameSize && (fileSize % frameSize) == 0)
-                frames = fileSize / frameSize;
-        }
-
-        m_formatComboBox->setItemData(i, frames > 0 ? boldFont : normalFont, Qt::FontRole);
-        m_formatComboBox->setItemData(i,
-                                      frames > 0 ? tr("Matches the file size: %1 bytes per frame, %2 frames.")
-                                                     .arg(decoder->expectedByteSize(tight))
-                                                     .arg(frames)
-                                                 : QString(),
-                                      Qt::ToolTipRole);
-    }
-}
-
-void YuvViewer::onPlaneChanged()
-{
-    if (!m_loadedDecoder || m_rawData.isEmpty())
+    if (!m_loadedDecoder || m_rawData.isEmpty() || !m_controls)
         return;  // nothing loaded yet; the next reload applies the selection
 
     if (m_loadedDecoder != m_decoder) {
@@ -1037,11 +517,11 @@ void YuvViewer::onPlaneChanged()
     const RawImageDecoder *decoder = m_loadedDecoder;
     const QByteArray data = m_rawData;  // implicitly shared: cheap capture
     const RawImageLayout layout = m_layout;
-    const int plane = currentPlane();
+    const int plane = m_controls->plane();
 
     startAsyncTask(
-        [decoder, data, layout, plane]() {
-            return renderImage(decoder, data, layout, plane);
+        [decoder, data, layout, plane] {
+            return RawImageFrame::render(decoder, data, layout, plane);
         },
         [this](RawImageDecoder::ImageResult result) {
             if (!result) {
@@ -1058,28 +538,24 @@ void YuvViewer::clear()
         m_imageWidget->setImage({});
         m_imageWidget->setText({});
     }
-
     if (m_infoTable)
         m_infoTable->setRowCount(0);
     if (m_histogramLabel)
         m_histogramLabel->clear();
 
-    m_loadedDecoder = nullptr;
-    m_rawData.clear();
-    m_layout = {};
-    m_image = {};
+    releaseFrame();
+    m_image = QImage();
     m_imageSize = {};
     m_maxScaleFactor = m_minScaleFactor = m_initialScaleFactor = m_scaleFactor = 1;
-    m_zoomInAction->setEnabled(false);
-    m_zoomOutAction->setEnabled(false);
-    m_resetZoomAction->setEnabled(false);
-    m_fitToWindowAction->setEnabled(false);
-    m_exportAction->setEnabled(false);
+    updateZoomActions();
     disablePrinting();
 }
 
 void YuvViewer::displayImage(const QImage &image)
 {
+    if (!m_imageWidget)
+        return;
+
     m_imageWidget->setText({});
     m_image = image;
 
@@ -1087,6 +563,8 @@ void YuvViewer::displayImage(const QImage &image)
     m_imageSize = QSizeF(image.size()) / devicePixelRatio;
     m_imageWidget->setImage(image);
 
+    // Scale an oversized image down to the viewport; anything that fits
+    // is shown at 1:1. Switching planes keeps the factor already in use.
     const QWidget *parent = m_imageWidget->parentWidget();
     const QSizeF targetSize = parent ? QSizeF(parent->size()) : m_imageSize;
     if (targetSize.width() > 0 && targetSize.height() > 0
@@ -1096,15 +574,14 @@ void YuvViewer::displayImage(const QImage &image)
                                     targetSize.height() / m_imageSize.height());
     }
 
-    m_maxScaleFactor = 3 * m_initialScaleFactor;
-    m_minScaleFactor = m_initialScaleFactor / 3;
-    doSetScaleFactor(m_initialScaleFactor);
+    m_maxScaleFactor = zoomRange * m_initialScaleFactor;
+    m_minScaleFactor = m_initialScaleFactor / zoomRange;
+    applyScaleFactor(m_initialScaleFactor);
 }
 
-void YuvViewer::updateInfoTab(const QString &fileName, const RawImageLayout &layout,
-                              const RawImageDecoder *decoder)
+void YuvViewer::updateInfoTab(const RawImageLayout &layout, const RawImageDecoder *decoder)
 {
-    if (!m_infoTable || !decoder)
+    if (!m_infoTable || !decoder || !m_file)
         return;
 
     const QLocale locale;
@@ -1116,22 +593,14 @@ void YuvViewer::updateInfoTab(const QString &fileName, const RawImageLayout &lay
         ++row;
     };
 
+    const QString fileName = m_file->fileName();
     m_infoTable->setRowCount(0);
     addRow(tr("File"), QDir::toNativeSeparators(fileName));
     for (const auto &[key, value] : std::as_const(m_fileNameMetadata)) {
-        if (key.compare(QStringLiteral("width"), Qt::CaseInsensitive) == 0
-            || key.compare(QStringLiteral("height"), Qt::CaseInsensitive) == 0
-            || key.compare(QStringLiteral("stride"), Qt::CaseInsensitive) == 0
-            || key.compare(QStringLiteral("scanline"), Qt::CaseInsensitive) == 0) {
-            continue;
-        }
-
-        QString displayName = key;
-        if (key == QStringLiteral("pipeline"))
-            displayName = tr("Pipeline");
-        else if (key == QStringLiteral("output"))
-            displayName = tr("Output");
-        addRow(displayName, value);
+        // Dimensions and padding are reported from the resolved layout
+        // below, which may differ from what the name asked for.
+        if (!RawImageFileName::isLayoutKey(key))
+            addRow(RawImageFileName::displayName(key), value);
     }
     addRow(tr("Format"), decoder->displayName());
     addRow(tr("Width"), tr("%1 px").arg(layout.width));
@@ -1145,13 +614,11 @@ void YuvViewer::updateInfoTab(const QString &fileName, const RawImageLayout &lay
     addRow(tr("Frames"), locale.toString(m_frameCount));
 }
 
-// Maps a position in widget coordinates to composite image coordinates.
 // A plane view shows the plane at its native (possibly subsampled)
 // resolution, so the displayed image is scaled back onto the layout.
-// Returns (-1,-1) when the position is outside the image.
 QPoint YuvViewer::compositePosition(QPoint widgetPos) const
 {
-    if (m_image.isNull() || m_layout.width <= 0 || m_scaleFactor <= 0)
+    if (!m_imageWidget || m_image.isNull() || m_layout.width <= 0 || m_scaleFactor <= 0)
         return {-1, -1};
 
     const QRectF target = m_imageWidget->imageRect();
@@ -1161,34 +628,38 @@ QPoint YuvViewer::compositePosition(QPoint widgetPos) const
     if (dx < 0 || dy < 0 || dx >= m_image.width() || dy >= m_image.height())
         return {-1, -1};
 
-    return {dx * m_layout.width / m_image.width(),
-            dy * m_layout.height / m_image.height()};
+    return {dx * m_layout.width / m_image.width(), dy * m_layout.height / m_image.height()};
+}
+
+void YuvViewer::probePixel(QPoint widgetPos)
+{
+    const QPoint pos = compositePosition(widgetPos);
+    if (pos.x() < 0)
+        return;
+
+    // describePixel() indexes by the layout, so a buffer that no longer
+    // matches it would be read out of bounds.
+    const auto validData = RawImageFrame::validate(m_loadedDecoder, m_rawData, m_layout);
+    if (!validData) {
+        reportError(validData.error());
+        releaseFrame();
+        return;
+    }
+
+    statusMessage(tr("(%1, %2)  %3")
+                      .arg(pos.x())
+                      .arg(pos.y())
+                      .arg(m_loadedDecoder->describePixel(m_rawData, m_layout, pos.x(), pos.y())),
+                  tr("probe"), 0);
 }
 
 bool YuvViewer::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == m_imageWidget && m_loadedDecoder && !m_rawData.isEmpty()) {
         switch (event->type()) {
-        case QEvent::MouseMove: {
-            const auto *mouseEvent = static_cast<const QMouseEvent *>(event);
-            const QPoint pos = compositePosition(mouseEvent->position().toPoint());
-            if (pos.x() >= 0) {
-                const auto validData = validateFrameData(m_loadedDecoder, m_rawData, m_layout);
-                if (!validData) {
-                    reportError(validData.error());
-                    m_loadedDecoder = nullptr;
-                    m_rawData.clear();
-                    return false;
-                }
-                statusMessage(tr("(%1, %2)  %3")
-                                  .arg(pos.x())
-                                  .arg(pos.y())
-                                  .arg(m_loadedDecoder->describePixel(m_rawData, m_layout,
-                                                                      pos.x(), pos.y())),
-                              tr("probe"), 0);
-            }
+        case QEvent::MouseMove:
+            probePixel(static_cast<const QMouseEvent *>(event)->position().toPoint());
             return false;
-        }
         case QEvent::Leave:
             if (statusBar())
                 statusBar()->clearMessage();
@@ -1203,10 +674,8 @@ bool YuvViewer::eventFilter(QObject *watched, QEvent *event)
 void YuvViewer::reportError(const QString &message)
 {
     QString detailedMessage = message;
-    if (m_file) {
-        detailedMessage += tr("\nFile: %1")
-                               .arg(QDir::toNativeSeparators(m_file->fileName()));
-    }
+    if (m_file)
+        detailedMessage += tr("\nFile: %1").arg(QDir::toNativeSeparators(m_file->fileName()));
 
     qWarning().noquote() << viewerName() + "/open:"_L1 << detailedMessage;
     if (m_imageWidget)
@@ -1217,33 +686,35 @@ void YuvViewer::reportError(const QString &message)
 void YuvViewer::setScaleFactor(qreal scaleFactor)
 {
     if (!qFuzzyCompare(m_scaleFactor, scaleFactor))
-        doSetScaleFactor(scaleFactor);
+        applyScaleFactor(scaleFactor);
 }
 
-void YuvViewer::doSetScaleFactor(qreal scaleFactor)
+void YuvViewer::applyScaleFactor(qreal scaleFactor)
 {
     m_scaleFactor = scaleFactor;
-    m_imageWidget->setScaleFactor(scaleFactor);
-    enableZoomActions();
+    if (m_imageWidget)
+        m_imageWidget->setScaleFactor(scaleFactor);
+    updateZoomActions();
 }
 
-void YuvViewer::enableZoomActions()
+void YuvViewer::updateZoomActions()
 {
+    const bool hasImage = !m_image.isNull();
     m_resetZoomAction->setEnabled(!qFuzzyCompare(m_scaleFactor, m_initialScaleFactor));
-    m_zoomInAction->setEnabled(m_scaleFactor < m_maxScaleFactor);
-    m_zoomOutAction->setEnabled(m_scaleFactor > m_minScaleFactor);
-    m_fitToWindowAction->setEnabled(!m_image.isNull());
-    m_exportAction->setEnabled(!m_image.isNull());
+    m_zoomInAction->setEnabled(hasImage && m_scaleFactor < m_maxScaleFactor);
+    m_zoomOutAction->setEnabled(hasImage && m_scaleFactor > m_minScaleFactor);
+    m_fitToWindowAction->setEnabled(hasImage);
+    m_exportAction->setEnabled(hasImage);
 }
 
 void YuvViewer::zoomIn()
 {
-    setScaleFactor(m_scaleFactor * 1.25);
+    setScaleFactor(m_scaleFactor * zoomInStep);
 }
 
 void YuvViewer::zoomOut()
 {
-    setScaleFactor(m_scaleFactor * 0.8);
+    setScaleFactor(m_scaleFactor * zoomOutStep);
 }
 
 void YuvViewer::resetZoom()
@@ -1253,7 +724,7 @@ void YuvViewer::resetZoom()
 
 void YuvViewer::fitToWindow()
 {
-    if (m_image.isNull() || m_imageSize.isEmpty())
+    if (!m_imageWidget || m_image.isNull() || m_imageSize.isEmpty())
         return;
 
     const QWidget *viewport = m_imageWidget->parentWidget();
@@ -1273,23 +744,25 @@ void YuvViewer::exportImage()
     // Export exactly what is on screen: the composite rendering or the
     // selected component plane.
     QString suggestion = QFileInfo(m_file->fileName()).completeBaseName();
-    if (m_frameSpinBox && m_frameCount > 1)
-        suggestion += QStringLiteral("_frame%1").arg(m_frameSpinBox->value());
-    if (m_planeComboBox && m_planeComboBox->currentIndex() > 0)
-        suggestion += QStringLiteral("_") + m_planeComboBox->currentText().toLower();
+    if (m_controls) {
+        if (m_frameCount > 1)
+            suggestion += QStringLiteral("_frame%1").arg(m_controls->frame());
+        const QString planeName = m_controls->selectedPlaneName();
+        if (!planeName.isEmpty())
+            suggestion += u'_' + planeName.toLower();
+    }
     suggestion += QStringLiteral(".png");
 
     const QString filter = tr("PNG image (*.png);;BMP image (*.bmp)");
     QString selectedFilter;
-    const QString fileName = QFileDialog::getSaveFileName(m_imageWidget,
-                                                          tr("Export Image"), suggestion,
-                                                          filter, &selectedFilter);
+    const QString fileName = QFileDialog::getSaveFileName(m_imageWidget, tr("Export Image"),
+                                                          suggestion, filter, &selectedFilter);
     if (fileName.isEmpty())
         return;
 
     QString finalName = fileName;
     if (QFileInfo(finalName).suffix().isEmpty()) {
-        finalName += selectedFilter.contains(QStringLiteral("bmp"), Qt::CaseInsensitive)
+        finalName += selectedFilter.contains("bmp"_L1, Qt::CaseInsensitive)
             ? QStringLiteral(".bmp") : QStringLiteral(".png");
     }
 
@@ -1298,25 +771,11 @@ void YuvViewer::exportImage()
                         .arg(QDir::toNativeSeparators(finalName)));
         return;
     }
-    statusMessage(tr("Exported \"%1\".").arg(QDir::toNativeSeparators(finalName)),
-                  tr("export"));
+    statusMessage(tr("Exported \"%1\".").arg(QDir::toNativeSeparators(finalName)), tr("export"));
 }
 
 void YuvViewer::retranslate()
 {
-    if (toolBars().isEmpty())
-        return;
-
-    toolBars().constFirst()->setWindowTitle(tr("YUV Image"));
-    m_widthLabel->setText(tr("Width:"));
-    m_heightLabel->setText(tr("Height:"));
-    m_formatLabel->setText(tr("Format:"));
-    m_frameLabel->setText(tr("Frame:"));
-    m_planeLabel->setText(tr("Plane:"));
-    if (m_planeComboBox && m_planeComboBox->count() > 0)
-        m_planeComboBox->setItemText(0, tr("Composite"));
-    m_widthSpinBox->setSuffix(tr(" px"));
-    m_heightSpinBox->setSuffix(tr(" px"));
     m_reloadAction->setText(tr("&Reload"));
     m_prevFrameAction->setText(tr("Previous Frame"));
     m_nextFrameAction->setText(tr("Next Frame"));
@@ -1328,14 +787,21 @@ void YuvViewer::retranslate()
     m_pixelGridAction->setText(tr("Pixel &Grid"));
     m_exportAction->setText(tr("&Export..."));
 
-    if (m_infoTable && m_uiAssets.tabs) {
-        const int index = m_uiAssets.tabs->indexOf(m_infoTable);
-        if (index >= 0)
-            m_uiAssets.tabs->setTabText(index, tr("Info"));
-    }
-    if (m_histogramLabel && m_uiAssets.tabs) {
-        const int index = m_uiAssets.tabs->indexOf(m_histogramLabel);
-        if (index >= 0)
-            m_uiAssets.tabs->setTabText(index, tr("Histogram"));
+    if (!toolBars().isEmpty())
+        toolBars().constFirst()->setWindowTitle(tr("YUV Image"));
+    if (m_controls)
+        m_controls->retranslate();
+
+    if (QTabWidget *tabs = m_uiAssets.tabs) {
+        if (m_infoTable) {
+            const int index = tabs->indexOf(m_infoTable);
+            if (index >= 0)
+                tabs->setTabText(index, tr("Info"));
+        }
+        if (m_histogramLabel) {
+            const int index = tabs->indexOf(m_histogramLabel);
+            if (index >= 0)
+                tabs->setTabText(index, tr("Histogram"));
+        }
     }
 }

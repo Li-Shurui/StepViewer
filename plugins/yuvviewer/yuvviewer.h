@@ -7,21 +7,32 @@
 #include "viewerinterfaces.h"
 
 #include "rawimagedecoder.h"
+#include "rawimagefilename.h"
 
 #include <QByteArray>
-#include <QList>
-#include <QPair>
+#include <QImage>
+#include <QPointer>
 #include <QSizeF>
 #include <QString>
 
+#include <optional>
+
 class QAction;
-class QComboBox;
-class QImage;
 class QLabel;
-class QSpinBox;
+class QPoint;
 class QTableWidget;
+class YuvControls;
 class YuvImageWidget;
 
+// Viewer for headerless image files. Because such a file says nothing
+// about its own content, the viewer combines three sources of truth:
+// the file name (see RawImageFileName), the saved session state and the
+// user's choice in the toolbar (see YuvControls). Decoding itself is
+// delegated to a RawImageDecoder.
+//
+// Widget members are QPointer because AbstractViewer::cleanup() destroys
+// the toolbar and the overview pages while this object stays alive to be
+// reused for the next file.
 class YuvViewer : public ViewerInterface
 {
     Q_OBJECT
@@ -52,9 +63,8 @@ public:
 
 private slots:
     void setupYuvUi();
-    void reload();
-    void onFormatChanged();
-    void onPlaneChanged();
+    void onFormatSelected();
+    void onPlaneSelected();
     void zoomIn();
     void zoomOut();
     void resetZoom();
@@ -64,34 +74,36 @@ private slots:
 private:
     void retranslate() override;
     void busyChanged(bool busy) override;
-    void clear();
-    void displayImage(const QImage &image);
-    void updateInfoTab(const QString &fileName, const RawImageLayout &layout,
-                       const RawImageDecoder *decoder);
-    void reportError(const QString &message);
-    void setScaleFactor(qreal scaleFactor);
-    void doSetScaleFactor(qreal scaleFactor);
-    void enableZoomActions();
-    void updateFrameUi(qint64 frameCount);
-    void updatePlaneCombo();
-    void updateFormatMatches();
-    int currentPlane() const;
-    QPoint compositePosition(QPoint widgetPos) const;
 
-    YuvImageWidget *m_imageWidget = nullptr;
-    QLabel *m_widthLabel = nullptr;
-    QLabel *m_heightLabel = nullptr;
-    QLabel *m_formatLabel = nullptr;
-    QLabel *m_frameLabel = nullptr;
-    QLabel *m_frameCountLabel = nullptr;
-    QLabel *m_planeLabel = nullptr;
-    QComboBox *m_formatComboBox = nullptr;
-    QComboBox *m_planeComboBox = nullptr;
-    QSpinBox *m_widthSpinBox = nullptr;
-    QSpinBox *m_heightSpinBox = nullptr;
-    QSpinBox *m_frameSpinBox = nullptr;
-    QTableWidget *m_infoTable = nullptr;
-    QLabel *m_histogramLabel = nullptr;
+    void createActions();
+    void setupToolBar();
+
+    // Collapses the loads that opening a file triggers (the initial one
+    // and the one after restoreState()) into a single read.
+    void requestReload();
+    void reload();
+    void clear();
+    void releaseFrame();
+
+    void displayImage(const QImage &image);
+    void updateInfoTab(const RawImageLayout &layout, const RawImageDecoder *decoder);
+    void reportError(const QString &message);
+
+    void setScaleFactor(qreal scaleFactor);
+    void applyScaleFactor(qreal scaleFactor);
+    void updateZoomActions();
+
+    // Maps a widget position to composite image coordinates, or (-1,-1)
+    // when it lies outside the image.
+    QPoint compositePosition(QPoint widgetPos) const;
+    void probePixel(QPoint widgetPos);
+
+    QPointer<YuvImageWidget> m_imageWidget;
+    QPointer<YuvControls> m_controls;
+    QPointer<QTableWidget> m_infoTable;
+    QPointer<QLabel> m_histogramLabel;
+
+    // Owned by this object and therefore valid across cleanup().
     QAction *m_reloadAction = nullptr;
     QAction *m_prevFrameAction = nullptr;
     QAction *m_nextFrameAction = nullptr;
@@ -102,19 +114,25 @@ private:
     QAction *m_smoothScalingAction = nullptr;
     QAction *m_pixelGridAction = nullptr;
     QAction *m_exportAction = nullptr;
+
+    // The format the user selected, mirrored out of the toolbar so that
+    // it survives cleanup() for saveState().
     const RawImageDecoder *m_decoder = nullptr;
+    // The format m_rawData was actually read with. Plane switching and
+    // the pixel probe must never interpret the buffer with anything else.
     const RawImageDecoder *m_loadedDecoder = nullptr;
-    bool m_hasFileLayout = false;
-    int m_fileWidth = 0;
-    int m_fileHeight = 0;
-    int m_fileStride = 0;
-    int m_fileScanline = 0;
-    QList<QPair<QString, QString>> m_fileNameMetadata;
+
+    // Layout taken from the file name; absent when the name says nothing.
+    std::optional<RawImageLayout> m_fileLayout;
+    RawImageFileName::Metadata m_fileNameMetadata;
     QString m_metadataError;
+
     qint64 m_frameCount = 1;
     QByteArray m_rawData;
     RawImageLayout m_layout;
     QImage m_image;
+    bool m_reloadPending = false;
+
     qreal m_scaleFactor = 1;
     qreal m_initialScaleFactor = 1;
     qreal m_minScaleFactor = 1;
