@@ -17,12 +17,15 @@
 #include <QDropEvent>
 #include <QFile>
 #include <QFileDialog>
+#include <QLabel>
 #include <QToolButton>
 #include <QMessageBox>
 #include <QMimeData>
 
 #include <QDir>
 #include <QSettings>
+
+#include <memory>
 
 using namespace Qt::StringLiterals;
 
@@ -61,6 +64,8 @@ MainWindow::MainWindow(Translator &translator, QWidget *parent)
     const QString msg = tr("Available viewers: %1").arg(viewers.join(", "_L1));
     statusBar()->showMessage(msg);
 
+    setupModeMenu();
+
     auto *menu = new RecentFileMenu(this, m_recentFiles.get());
     ui->actionRecent->setMenu(menu);
     connect(menu, &RecentFileMenu::fileOpened, this, &MainWindow::openFile);
@@ -68,6 +73,64 @@ MainWindow::MainWindow(Translator &translator, QWidget *parent)
     auto *button = qobject_cast<QToolButton *>(w);
     if (button)
         connect(ui->actionRecent, &QAction::triggered, button, &QToolButton::showMenu);
+}
+
+void MainWindow::setupModeMenu()
+{
+    ui->actiontext_viewer->setData(u"TxtViewer"_s);
+    ui->actionjson_viewer->setData(u"JsonViewer"_s);
+    ui->actionimage_viewer->setData(u"ImageViewer"_s);
+    ui->actionyuv_viewer->setData(u"YuvViewer"_s);
+
+    auto *modeGroup = new QActionGroup(this);
+    modeGroup->setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);
+
+    const QList<QAction *> modeActions = ui->menuMode->actions();
+    for (QAction *action : modeActions) {
+        action->setCheckable(true);
+        modeGroup->addAction(action);
+    }
+
+    connect(modeGroup, &QActionGroup::triggered, this, [this](QAction *action) {
+        onActionSwitchViewer(action->data().toString());
+    });
+
+    updateModeMenu();
+}
+
+void MainWindow::updateModeMenu()
+{
+    const bool hasFile = !m_currentFile.isEmpty();
+    const QString activeViewer = m_viewer ? m_viewer->viewerName() : QString();
+
+    const QList<QAction *> modeActions = ui->menuMode->actions();
+    for (QAction *action : modeActions) {
+        const QString viewerName = action->data().toString();
+        action->setEnabled(hasFile && m_factory && m_factory->hasViewer(viewerName));
+        action->setChecked(!viewerName.isEmpty() && viewerName == activeViewer);
+    }
+}
+
+void MainWindow::onActionSwitchViewer(const QString &viewerName)
+{
+    if (m_currentFile.isEmpty()) {
+        showViewerError(tr("Open a file before choosing a viewer."));
+        updateModeMenu();
+        return;
+    }
+
+    openFileWithViewer(m_currentFile, viewerName);
+}
+
+void MainWindow::showViewerError(const QString &message)
+{
+    auto *label = new QLabel(message);
+    label->setAlignment(Qt::AlignCenter);
+    label->setWordWrap(true);
+    label->setMargin(24);
+    label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    // The scroll area takes ownership and destroys the previous viewer widget.
+    ui->scrollArea->setWidget(label);
 }
 
 bool MainWindow::hasPlugins() const
@@ -128,50 +191,81 @@ void MainWindow::onActionOpenTriggered()
 
 bool MainWindow::openFile(const QString &fileName)
 {
-    QFile *file = new QFile(fileName);
+    return openFileWithViewer(fileName, QString());
+}
+
+bool MainWindow::openFileWithViewer(const QString &fileName, const QString &viewerName)
+{
+    auto file = std::make_unique<QFile>(fileName);
     if (!file->exists()) {
-        statusBar()->showMessage(tr("File %1 could not be opened")
-                                 .arg(QDir::toNativeSeparators(fileName)));
-        delete file;
+        const QString message = tr("File %1 could not be opened")
+                                    .arg(QDir::toNativeSeparators(fileName));
+        statusBar()->showMessage(message);
         return false;
     }
 
-    QFileInfo fileInfo(*file);
+    const QFileInfo fileInfo(*file);
     m_currentDir = fileInfo.dir();
-    m_recentFiles->addFile(fileInfo.absoluteFilePath());
+    m_currentFile = fileInfo.absoluteFilePath();
+    m_recentFiles->addFile(m_currentFile);
 
-    // If a viewer is already open, clean it up and save its settings
-    resetViewer();
-    m_viewer = m_factory->viewer(file);
-    if (!m_viewer) {
-        statusBar()->showMessage(tr("File %1 can't be opened.")
-                                 .arg(QDir::toNativeSeparators(fileName)));
+    detachViewer();
+
+    AbstractViewer *viewer = viewerName.isEmpty()
+            ? m_factory->viewer(file.get())
+            : m_factory->namedViewer(file.get(), viewerName);
+    if (!viewer) {
+        const QString message = viewerName.isEmpty()
+                ? tr("File %1 can't be opened.").arg(QDir::toNativeSeparators(fileName))
+                : tr("%1 cannot open %2.").arg(viewerName,
+                                               QDir::toNativeSeparators(fileName));
+        statusBar()->showMessage(message);
+        showViewerError(message);
+        updateModeMenu();
         return false;
     }
 
-    for (const QMetaObject::Connection &connection : m_viewerConnections)
-        disconnect(connection);
-
-    m_viewerConnections = {
-        connect(m_viewer, &AbstractViewer::printingEnabledChanged, ui->actionPrint,
-                &QAction::setEnabled),
-        connect(ui->actionPrint, &QAction::triggered, m_viewer, &AbstractViewer::print),
-        connect(m_viewer, &AbstractViewer::showMessage, statusBar(), &QStatusBar::showMessage)
-    };
-    m_viewer->initViewer(ui->actionBack, ui->actionForward, ui->menuHelp->menuAction(), ui->tabWidget);
-    restoreViewerSettings();
-    ui->scrollArea->setWidget(m_viewer->widget());
-    return true;
+    file.release(); // The viewer owns the file from here on.
+    return attachViewer(viewer);
 }
 
 bool MainWindow::openData(const QByteArray &data, const QString &mimeType)
 {
-    resetViewer();
+    detachViewer();
+    // Dropped data has no file behind it, so there is nothing to re-open in a
+    // different mode.
+    m_currentFile.clear();
 
-    m_viewer = m_factory->viewer(data, mimeType);
+    AbstractViewer *viewer = m_factory->viewer(data, mimeType);
+    if (!viewer) {
+        const QString message = tr("No viewer can display %1 data.").arg(mimeType);
+        statusBar()->showMessage(message);
+        showViewerError(message);
+        updateModeMenu();
+        return false;
+    }
+
+    return attachViewer(viewer);
+}
+
+void MainWindow::detachViewer()
+{
+    // Saves the viewer state and stops its background work while its widget is
+    // still alive, then drops the pointer because whatever is shown next takes
+    // over the scroll area and destroys that widget.
+    resetViewer();
 
     for (const QMetaObject::Connection &connection : m_viewerConnections)
         disconnect(connection);
+    m_viewerConnections = {};
+    m_viewer = nullptr;
+    ui->actionPrint->setEnabled(false);
+}
+
+bool MainWindow::attachViewer(AbstractViewer *viewer)
+{
+    Q_ASSERT(viewer);
+    m_viewer = viewer;
 
     m_viewerConnections = {
         connect(m_viewer, &AbstractViewer::printingEnabledChanged, ui->actionPrint,
@@ -180,9 +274,11 @@ bool MainWindow::openData(const QByteArray &data, const QString &mimeType)
         connect(m_viewer, &AbstractViewer::showMessage, statusBar(), &QStatusBar::showMessage)
     };
 
-    m_viewer->initViewer(ui->actionBack, ui->actionForward, ui->menuHelp->menuAction(), ui->tabWidget);
+    m_viewer->initViewer(ui->actionBack, ui->actionForward, ui->menuHelp->menuAction(),
+                         ui->tabWidget);
     restoreViewerSettings();
     ui->scrollArea->setWidget(m_viewer->widget());
+    updateModeMenu();
     return true;
 }
 

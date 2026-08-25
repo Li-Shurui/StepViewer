@@ -45,6 +45,9 @@ public:
     bool restoreState(QByteArray &state) override;
     bool supportsOverview() const override { return true; }
     bool supportsExtensionlessFiles() const override { return true; }
+    // The format combo box and the size fields let the user describe any
+    // file, so the viewer decides about the content instead of the factory.
+    bool acceptsAnyFile() const override { return true; }
     void cleanup() override;
 
 private slots:

@@ -59,6 +59,11 @@ public:
     // type sniffing and the default viewer.
     virtual bool supportsExtensionlessFiles() const;
 
+    // Viewers returning true take any file the user explicitly points them
+    // at and judge the content themselves. This never affects automatic
+    // viewer selection, only an explicit choice via ViewerFactory::namedViewer().
+    virtual bool acceptsAnyFile() const;
+
     virtual bool isDefaultViewer() const;
     virtual void cleanup();
     void setTranslationBaseName(const QString &baseName);

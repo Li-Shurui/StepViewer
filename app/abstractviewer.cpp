@@ -279,6 +279,11 @@ bool AbstractViewer::supportsExtensionlessFiles() const
     return false;
 }
 
+bool AbstractViewer::acceptsAnyFile() const
+{
+    return false;
+}
+
 bool AbstractViewer::isDefaultViewer() const
 {
     return false;

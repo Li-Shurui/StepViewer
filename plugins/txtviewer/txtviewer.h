@@ -27,6 +27,8 @@ public:
     QByteArray saveState() const override { return {}; }
     bool restoreState(QByteArray &) override { return true; }
     bool supportsOverview() const override { return false; }
+    // Any file can be shown as text, even if the result is unreadable.
+    bool acceptsAnyFile() const override { return true; }
 
 #ifdef DOCUMENTVIEWER_PRINTSUPPORT
 protected:
