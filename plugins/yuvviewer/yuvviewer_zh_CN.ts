@@ -318,9 +318,19 @@
         <translation>已加载数据大小（%1 字节）与 %2 帧大小（%3 字节）不匹配。图像加载期间格式可能发生了变化。</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="233"/>
+        <location filename="yuvviewer.cpp" line="299"/>
         <source>%1  (mean %2)</source>
         <translation>%1（均值 %2）</translation>
+    </message>
+    <message>
+        <location filename="yuvviewer.cpp" line="352"/>
+        <source>Value</source>
+        <translation>像素值</translation>
+    </message>
+    <message>
+        <location filename="yuvviewer.cpp" line="371"/>
+        <source>Count</source>
+        <translation>像素数</translation>
     </message>
     <message>
         <location filename="yuvviewer.cpp" line="647"/>

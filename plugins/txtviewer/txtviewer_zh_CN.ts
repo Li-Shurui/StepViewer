@@ -22,6 +22,15 @@
 %2。</translation>
     </message>
     <message>
+        <location filename="txtviewer.cpp" line="150"/>
+        <source>
+
+[Truncated: showing the first %1 of %2.]</source>
+        <translation>
+
+[内容已截断：仅显示前 %1，文件共 %2。]</translation>
+    </message>
+    <message>
         <location filename="txtviewer.cpp" line="152"/>
         <source>File %1 loaded.</source>
         <translation>文件 %1 已加载。</translation>

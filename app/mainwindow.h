@@ -44,9 +44,17 @@ private slots:
     void onActionAboutQtTriggered();
     void onActionSwitchLanguage(QLocale::Language lang);
     void onActionSwitchTheme(const QString &themeId);
+    void onActionSwitchViewer(const QString &viewerName);
 
 private:
     void applyTheme(const QString &themeId);
+    void setupModeMenu();
+    void updateModeMenu();
+    void showViewerError(const QString &message);
+    void detachViewer();
+    bool attachViewer(AbstractViewer *viewer);
+    // An empty viewerName lets the factory pick the viewer by file type.
+    bool openFileWithViewer(const QString &fileName, const QString &viewerName);
     void readSettings();
     void saveSettings() const;
     void restoreViewerSettings();
@@ -54,6 +62,7 @@ private:
     void saveViewerSettings() const;
 
     QDir m_currentDir;
+    QString m_currentFile;
     AbstractViewer *m_viewer = nullptr;
     std::unique_ptr<Ui::MainWindow> ui;
     std::unique_ptr<RecentFiles> m_recentFiles;

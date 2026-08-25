@@ -123,7 +123,17 @@
     <addaction name="menuLanguage"/>
     <addaction name="menuTheme"/>
    </widget>
+   <widget class="QMenu" name="menuMode">
+    <property name="title">
+     <string>Mode</string>
+    </property>
+    <addaction name="actiontext_viewer"/>
+    <addaction name="actionjson_viewer"/>
+    <addaction name="actionimage_viewer"/>
+    <addaction name="actionyuv_viewer"/>
+   </widget>
    <addaction name="qtFileMenu"/>
+   <addaction name="menuMode"/>
    <addaction name="menuHelp"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
@@ -292,6 +302,26 @@
    </property>
    <property name="toolTip">
     <string>Use the default Qt style with no extra stylesheet</string>
+   </property>
+  </action>
+  <action name="actiontext_viewer">
+   <property name="text">
+    <string>text viewer</string>
+   </property>
+  </action>
+  <action name="actionjson_viewer">
+   <property name="text">
+    <string>json viewer</string>
+   </property>
+  </action>
+  <action name="actionimage_viewer">
+   <property name="text">
+    <string>image viewer</string>
+   </property>
+  </action>
+  <action name="actionyuv_viewer">
+   <property name="text">
+    <string>yuv viewer</string>
    </property>
   </action>
  </widget>

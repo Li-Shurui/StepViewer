@@ -22,6 +22,29 @@ namespace {
     struct Tr {
         Q_DECLARE_TR_FUNCTIONS(ViewerFactory);
     };
+
+    // Mirrors the order in which viewer(QFile *) picks a viewer automatically.
+    bool claimsSupport(const AbstractViewer *viewer, const QFileInfo &info)
+    {
+        if (viewer->acceptsAnyFile())
+            return true;
+
+        const QString suffix = info.suffix();
+        if (!suffix.isEmpty() && viewer->supportedExtensions().contains(suffix))
+            return true;
+
+        QMimeDatabase db;
+        const QMimeType mimeType = db.mimeTypeForFile(info);
+        const QStringList supported = viewer->supportedMimeTypes();
+        for (const QString &type : supported) {
+            if (mimeType.inherits(type))
+                return true;
+        }
+
+        // Raw-data viewers let the user pick the layout by hand, so they take
+        // files whose format cannot be told from the name.
+        return suffix.isEmpty() && viewer->supportsExtensionlessFiles();
+    }
 }
 
 ViewerFactory::ViewerFactory(QWidget *displayWidget, QMainWindow *mainWindow, DefaultPolicy policy)
@@ -76,6 +99,18 @@ AbstractViewer *ViewerFactory::viewer(QFile *file) const
     return viewer;
 }
 
+AbstractViewer *ViewerFactory::namedViewer(QFile *file, const QString &viewerName) const
+{
+    Q_ASSERT(file);
+
+    AbstractViewer *viewer = m_viewers.value(viewerName, nullptr);
+    if (!viewer || !claimsSupport(viewer, QFileInfo(*file)))
+        return nullptr;
+
+    viewer->init(file, m_displayWidget, m_mainWindow);
+    return viewer;
+}
+
 AbstractViewer *ViewerFactory::viewer(const QByteArray &data, const QString &mimeType) const
 {
     Q_ASSERT(!data.isEmpty());
@@ -90,8 +125,12 @@ AbstractViewer *ViewerFactory::viewer(const QByteArray &data, const QString &mim
 
     // Find via mime type
     AbstractViewer *viewer = ViewerFactory::viewer(qtMime);
-    QTemporaryFile *tmpFile = new QTemporaryFile(viewer);
+    if (!viewer) {
+        qWarning() << "Mime type" << qtMime.name() << "not supported.";
+        return nullptr;
+    }
 
+    QTemporaryFile *tmpFile = new QTemporaryFile(viewer);
     if (!tmpFile->open()) {
         delete tmpFile;
         return nullptr;
@@ -101,7 +140,6 @@ AbstractViewer *ViewerFactory::viewer(const QByteArray &data, const QString &mim
     tmpFile->flush();
     tmpFile->seek(0);
 
-    Q_ASSERT(viewer);
     viewer->init(tmpFile, m_displayWidget, m_mainWindow);
     return viewer;
 }
@@ -199,6 +237,11 @@ QStringList ViewerFactory::viewerNames(bool showDefault) const
 ViewerFactory::ViewerList ViewerFactory::viewers() const
 {
     return m_viewers.values();
+}
+
+bool ViewerFactory::hasViewer(const QString &viewerName) const
+{
+    return m_viewers.contains(viewerName);
 }
 
 AbstractViewer *ViewerFactory::findViewer(const QString &viewerName) const

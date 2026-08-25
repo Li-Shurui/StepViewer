@@ -296,6 +296,46 @@
         <translation>无法打开文件 %1。</translation>
     </message>
     <message>
+        <location filename="mainwindow.ui" line="128"/>
+        <source>Mode</source>
+        <translation>模式</translation>
+    </message>
+    <message>
+        <location filename="mainwindow.ui" line="309"/>
+        <source>text viewer</source>
+        <translation>文本查看器</translation>
+    </message>
+    <message>
+        <location filename="mainwindow.ui" line="314"/>
+        <source>json viewer</source>
+        <translation>JSON 查看器</translation>
+    </message>
+    <message>
+        <location filename="mainwindow.ui" line="319"/>
+        <source>image viewer</source>
+        <translation>图片查看器</translation>
+    </message>
+    <message>
+        <location filename="mainwindow.ui" line="324"/>
+        <source>yuv viewer</source>
+        <translation>YUV 查看器</translation>
+    </message>
+    <message>
+        <location filename="mainwindow.cpp" line="119"/>
+        <source>Open a file before choosing a viewer.</source>
+        <translation>请先打开文件，然后再选择查看器。</translation>
+    </message>
+    <message>
+        <location filename="mainwindow.cpp" line="221"/>
+        <source>%1 cannot open %2.</source>
+        <translation>%1 无法打开 %2。</translation>
+    </message>
+    <message>
+        <location filename="mainwindow.cpp" line="247"/>
+        <source>No viewer can display %1 data.</source>
+        <translation>没有可显示 %1 数据的查看器。</translation>
+    </message>
+    <message>
         <location filename="mainwindow.cpp" line="247"/>
         <source>A Widgets application to display and print JSON, text and PDF files. Demonstrates various features to use in widget applications: Using QSettings, query and save user preferences, manage file histories and control cursor behavior when hovering over widgets.
 

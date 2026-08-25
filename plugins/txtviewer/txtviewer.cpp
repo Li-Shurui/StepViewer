@@ -17,8 +17,16 @@
 #include <QTextDocument>
 
 #include <QDir>
+#include <QLocale>
 
 #include <expected>
+
+namespace {
+// The viewer accepts any file, including raw images of tens of megabytes.
+// Laying out that much text costs far more than reading it, so only the
+// beginning is shown.
+constexpr qsizetype maximumDisplayBytes = 4 * 1024 * 1024;
+}
 
 #ifdef DOCUMENTVIEWER_PRINTSUPPORT
 #include <QPrinter>
@@ -136,8 +144,20 @@ void TxtViewer::openFile()
                 promise.addResult(TextResult(std::unexpected(bytes.error())));
                 return;
             }
+
+            const qsizetype totalBytes = bytes->size();
+            const bool truncated = totalBytes > maximumDisplayBytes;
+            if (truncated)
+                bytes->truncate(maximumDisplayBytes);
+
             QTextStream in(*bytes, QIODevice::ReadOnly);
-            promise.addResult(in.readAll());
+            QString text = in.readAll();
+            if (truncated) {
+                text += tr("\n\n[Truncated: showing the first %1 of %2.]")
+                            .arg(QLocale().formattedDataSize(maximumDisplayBytes),
+                                 QLocale().formattedDataSize(totalBytes));
+            }
+            promise.addResult(text);
         },
         [this](int value) {
             statusMessage(tr("Loading... %1%").arg(value), tr("open"), 0);

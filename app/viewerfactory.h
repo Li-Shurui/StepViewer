@@ -34,10 +34,16 @@ public:
     AbstractViewer *viewer(QFile *file) const;
     AbstractViewer *viewer(const QByteArray &data, const QString &mimeType) const;
 
+    // Bypasses the automatic detection and hands the file to the named viewer.
+    // Returns nullptr when the plugin is not loaded or does not claim support
+    // for the file, in which case ownership of file stays with the caller.
+    AbstractViewer *namedViewer(QFile *file, const QString &viewerName) const;
+
     using ViewerMap = QMap<QString, AbstractViewer *>;
     using ViewerList = QList<AbstractViewer *>;
     QStringList viewerNames(bool showDefault = false) const;
     ViewerList viewers() const;
+    bool hasViewer(const QString &viewerName) const;
     AbstractViewer *findViewer(const QString &viewerName) const;
     AbstractViewer *defaultViewer() const;
     QStringList supportedMimeTypes() const;
