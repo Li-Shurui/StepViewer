@@ -636,8 +636,10 @@ public:
         const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
         const auto offsets = componentOffsets();
         const uchar *macropixel = pixels + qint64(y) * layout.stride + (x / 2) * 4;
-        return describeYuv(macropixel[offsets[0]], macropixel[offsets[1]],
-                           macropixel[offsets[2]]);
+        // The macropixel carries both luma samples two bytes apart; U and V
+        // are shared by its two pixels.
+        const int luma = macropixel[offsets[0] + (x % 2) * 2];
+        return describeYuv(luma, macropixel[offsets[1]], macropixel[offsets[2]]);
     }
 
 protected:
