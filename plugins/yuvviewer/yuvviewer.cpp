@@ -169,8 +169,6 @@ void YuvViewer::setupToolBar()
     connect(m_controls, &YuvControls::planeSelected, this, &YuvViewer::onPlaneSelected);
     connect(m_controls, &YuvControls::frameSelected, this, &YuvViewer::requestReload);
 
-    // toolBar->addAction(m_prevFrameAction);
-    // toolBar->addAction(m_nextFrameAction);
     toolBar->addAction(m_reloadAction);
     toolBar->addSeparator();
     toolBar->addAction(m_zoomInAction);
@@ -330,6 +328,9 @@ void YuvViewer::requestReload()
 
 void YuvViewer::reload()
 {
+    if (m_controls)
+        m_controls->commitPendingEdits();
+
     clear();
     // A new reload supersedes a pending load; cancellation lets the worker
     // abort its read early instead of running to completion.

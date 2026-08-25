@@ -57,6 +57,10 @@ public:
 
     void retranslate();
 
+    // Commits in-progress spin box edits so value() matches what is on
+    // screen. Call before reading width, height or frame for a reload.
+    void commitPendingEdits();
+
 signals:
     // A format or plane the user picked, as opposed to one restored or
     // derived from the file name.
