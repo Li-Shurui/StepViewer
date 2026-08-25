@@ -241,3 +241,10 @@ void YuvControls::retranslate()
         m_planeComboBox->setItemText(compositeIndex, tr("Composite"));
     highlightMatchingFormats();
 }
+
+void YuvControls::commitPendingEdits()
+{
+    m_widthSpinBox->interpretText();
+    m_heightSpinBox->interpretText();
+    m_frameSpinBox->interpretText();
+}
