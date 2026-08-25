@@ -90,6 +90,45 @@ inline RawImageDecoder::LayoutResult validateYuv422Layout(const RawImageDecoder 
     return layout;
 }
 
+// Shared layout validation for 4:4:4 formats (planar, semi-planar and
+// packed): without chroma subsampling no dimension has to be even, so
+// only the row and plane padding are checked. bytesPerPixel scales the
+// stride requirement for packed layouts, whose single plane carries
+// every component of a pixel.
+inline RawImageDecoder::LayoutResult validateYuv444Layout(const RawImageDecoder &decoder,
+                                                          const RawImageLayout &layout,
+                                                          int bytesPerPixel = 1)
+{
+    const RawImageDecoder::LayoutResult baseResult = decoder.RawImageDecoder::validateLayout(layout);
+    if (!baseResult)
+        return baseResult;
+
+    if (layout.stride < layout.width * bytesPerPixel) {
+        if (bytesPerPixel == 1) {
+            return std::unexpected(RawImageDecoder::tr("%1 stride must be at least the width. "
+                                                       "Received width %2, stride %3.")
+                                       .arg(decoder.displayName())
+                                       .arg(layout.width)
+                                       .arg(layout.stride));
+        }
+        return std::unexpected(RawImageDecoder::tr("%1 stride must be at least the width times %2 "
+                                                   "bytes. Received width %3, stride %4.")
+                                   .arg(decoder.displayName())
+                                   .arg(bytesPerPixel)
+                                   .arg(layout.width)
+                                   .arg(layout.stride));
+    }
+    if (layout.scanline < layout.height) {
+        return std::unexpected(RawImageDecoder::tr("%1 scanline must be at least the height. "
+                                                   "Received height %2, scanline %3.")
+                                   .arg(decoder.displayName())
+                                   .arg(layout.height)
+                                   .arg(layout.scanline));
+    }
+
+    return layout;
+}
+
 // Wraps a converted RGB/RGBA Mat into a detached QImage.
 inline RawImageDecoder::ImageResult rgbaMatToImage(const cv::Mat &rgba,
                                                    const RawImageLayout &layout,

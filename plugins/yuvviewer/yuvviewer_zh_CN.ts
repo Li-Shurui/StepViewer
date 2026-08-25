@@ -59,19 +59,6 @@
     </message>
 </context>
 <context>
-    <name>PlanarYuv444Decoder</name>
-    <message>
-        <location filename="yuvdecoders.cpp" line="941"/>
-        <source>%1 stride must be at least the width. Received width %2, stride %3.</source>
-        <translation>%1 的 stride 至少为宽度。当前宽度 %2，stride %3。</translation>
-    </message>
-    <message>
-        <location filename="yuvdecoders.cpp" line="948"/>
-        <source>%1 scanline must be at least the height. Received height %2, scanline %3.</source>
-        <translation>%1 的 scanline 至少为高度。当前高度 %2，scanline %3。</translation>
-    </message>
-</context>
-<context>
     <name>RawImageDecoder</name>
     <message>
         <location filename="rawimagedecoder.cpp" line="19"/>
@@ -171,8 +158,19 @@
     </message>
     <message>
         <location filename="rawimagedecoder_p.h" line="83"/>
+        <location filename="rawimagedecoder_p.h" line="122"/>
         <source>%1 scanline must be at least the height. Received height %2, scanline %3.</source>
         <translation>%1 的 scanline 至少为高度。当前高度 %2，scanline %3。</translation>
+    </message>
+    <message>
+        <location filename="rawimagedecoder_p.h" line="108"/>
+        <source>%1 stride must be at least the width. Received width %2, stride %3.</source>
+        <translation>%1 的 stride 至少为宽度。当前宽度 %2，stride %3。</translation>
+    </message>
+    <message>
+        <location filename="rawimagedecoder_p.h" line="114"/>
+        <source>%1 stride must be at least the width times %2 bytes. Received width %3, stride %4.</source>
+        <translation>%1 的 stride 至少为宽度乘以 %2 字节。当前宽度 %3，stride %4。</translation>
     </message>
     <message>
         <location filename="rawimagedecoder_p.h" line="99"/>
