@@ -105,8 +105,6 @@ private:
 
     // Owned by this object and therefore valid across cleanup().
     QAction *m_reloadAction = nullptr;
-    QAction *m_prevFrameAction = nullptr;
-    QAction *m_nextFrameAction = nullptr;
     QAction *m_zoomInAction = nullptr;
     QAction *m_zoomOutAction = nullptr;
     QAction *m_resetZoomAction = nullptr;

@@ -81,20 +81,6 @@ void YuvViewer::createActions()
     m_reloadAction = addAction(QKeySequence(Qt::ControlModifier | Qt::Key_R));
     connect(m_reloadAction, &QAction::triggered, this, &YuvViewer::requestReload);
 
-    m_prevFrameAction = addAction(QKeySequence(Qt::Key_PageUp));
-    m_prevFrameAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::GoPrevious));
-    connect(m_prevFrameAction, &QAction::triggered, this, [this] {
-        if (m_controls)
-            m_controls->stepFrame(-1);
-    });
-
-    m_nextFrameAction = addAction(QKeySequence(Qt::Key_PageDown));
-    m_nextFrameAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::GoNext));
-    connect(m_nextFrameAction, &QAction::triggered, this, [this] {
-        if (m_controls)
-            m_controls->stepFrame(1);
-    });
-
     m_zoomInAction = addAction(QKeySequence::ZoomIn);
     m_zoomInAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::ZoomIn));
     connect(m_zoomInAction, &QAction::triggered, this, &YuvViewer::zoomIn);
@@ -131,8 +117,6 @@ void YuvViewer::createActions()
     m_exportAction->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::DocumentSaveAs));
     connect(m_exportAction, &QAction::triggered, this, &YuvViewer::exportImage);
 
-    m_prevFrameAction->setEnabled(false);
-    m_nextFrameAction->setEnabled(false);
     m_zoomInAction->setEnabled(false);
     m_zoomOutAction->setEnabled(false);
     m_resetZoomAction->setEnabled(false);
@@ -185,8 +169,8 @@ void YuvViewer::setupToolBar()
     connect(m_controls, &YuvControls::planeSelected, this, &YuvViewer::onPlaneSelected);
     connect(m_controls, &YuvControls::frameSelected, this, &YuvViewer::requestReload);
 
-    toolBar->addAction(m_prevFrameAction);
-    toolBar->addAction(m_nextFrameAction);
+    // toolBar->addAction(m_prevFrameAction);
+    // toolBar->addAction(m_nextFrameAction);
     toolBar->addAction(m_reloadAction);
     toolBar->addSeparator();
     toolBar->addAction(m_zoomInAction);
@@ -386,8 +370,6 @@ void YuvViewer::reload()
     const qint64 frames = RawImageFrame::count(*decoder, loadLayout, fileSize);
     m_frameCount = qMax<qint64>(frames, 1);
     m_controls->setFrameCount(m_frameCount);
-    m_prevFrameAction->setEnabled(m_frameCount > 1);
-    m_nextFrameAction->setEnabled(m_frameCount > 1);
 
     const qint64 frameIndex = frames > 0 ? qMin<qint64>(m_controls->frame() - 1, frames - 1) : 0;
     const int plane = m_controls->plane();
@@ -777,8 +759,6 @@ void YuvViewer::exportImage()
 void YuvViewer::retranslate()
 {
     m_reloadAction->setText(tr("&Reload"));
-    m_prevFrameAction->setText(tr("Previous Frame"));
-    m_nextFrameAction->setText(tr("Next Frame"));
     m_zoomInAction->setText(tr("Zoom &In"));
     m_zoomOutAction->setText(tr("Zoom &Out"));
     m_resetZoomAction->setText(tr("Reset Zoom"));
