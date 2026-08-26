@@ -1317,6 +1317,26 @@ protected:
     std::array<int, 3> componentOffsets() const override { return {0, 1, 2}; }
 };
 
+class AyuvDecoder final : public PackedYuv444Decoder
+{
+public:
+    QLatin1StringView id() const override { return "ayuv"_L1; }
+    QString displayName() const override { return QStringLiteral("AYUV"); }
+    QString mimeType() const override { return "video/x-raw-ayuv"_L1; }
+    QStringList fileExtensions() const override
+    {
+        return {"ayuv"_L1, "AYUV"_L1, "vuya"_L1, "VUYA"_L1};
+    }
+
+protected:
+    int bytesPerPixel() const override { return 4; }
+    // The FourCC names the components of a little-endian 32-bit word from
+    // the most significant byte down, so in memory they run V,U,Y,A --
+    // which is why FFmpeg calls this same layout VUYA.
+    std::array<int, 3> componentOffsets() const override { return {2, 1, 0}; }
+    int alphaOffset() const override { return 3; }
+};
+
 } // namespace
 
 QList<const RawImageDecoder *> RawImageDecoders::createYuvDecoders()
@@ -1343,5 +1363,6 @@ QList<const RawImageDecoder *> RawImageDecoders::createYuvDecoders()
         new Nv24Decoder,
         new Nv42Decoder,
         new Yuv444Decoder,
+        new AyuvDecoder,
     };
 }
