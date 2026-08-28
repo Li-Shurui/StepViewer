@@ -28,6 +28,13 @@ RawImageDecoder::LayoutResult RawImageDecoder::validateLayout(const RawImageLayo
                                    .arg(maximumStride)
                                    .arg(maximumDimension));
     }
+    // Only meaningful for the 16-bit container formats; the others never
+    // read it and keep the default.
+    if (defaultSampleFormat() && (layout.sample.bits < 8 || layout.sample.bits > 16)) {
+        return std::unexpected(tr("%1 sample depth must be between 8 and 16 bits. Received %2.")
+                                   .arg(displayName())
+                                   .arg(layout.sample.bits));
+    }
 
     return layout;
 }

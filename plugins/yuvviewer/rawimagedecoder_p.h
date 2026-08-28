@@ -267,10 +267,38 @@ inline quint16 readLe16(const uchar *p)
     return value;
 }
 
+// The sample as the format's own number, which is what the pixel probe
+// reports: 0 .. 2^bits - 1, whichever end of the container it sits at.
+inline int rawSampleValue(quint16 container, const RawSampleFormat &format)
+{
+    if (format.msbAligned)
+        return container >> format.padding();
+    return container & quint16((1u << format.bits) - 1u);
+}
+
+// The same sample expanded to the full 16-bit range, which is what the
+// converters and the 8-bit display path want. MSB-aligned samples already
+// are full range; right-aligned ones have to be shifted up, otherwise
+// 10-bit data would only ever reach 1.5% of the range.
+inline quint16 fullRangeSample(quint16 container, const RawSampleFormat &format)
+{
+    if (format.msbAligned)
+        return container;
+    return quint16(quint32(container & quint16((1u << format.bits) - 1u)) << format.padding());
+}
+
+// True when containers can be handed to OpenCV or QImage as they are,
+// letting the converters skip a normalizing copy of the whole plane.
+inline bool sampleNeedsNormalizing(const RawSampleFormat &format)
+{
+    return !format.msbAligned && format.padding() != 0;
+}
+
 // Wraps a 16-bit plane as 8-bit grayscale, taking the most significant
-// byte of each MSB-aligned sample.
+// byte of each normalized sample.
 inline RawImageDecoder::ImageResult grayscale16Plane(const uchar *base, int width, int height,
-                                                     qsizetype strideBytes)
+                                                     qsizetype strideBytes,
+                                                     const RawSampleFormat &format)
 {
     QImage image(width, height, QImage::Format_Grayscale8);
     if (image.isNull())
@@ -279,14 +307,15 @@ inline RawImageDecoder::ImageResult grayscale16Plane(const uchar *base, int widt
         const uchar *src = base + qint64(row) * strideBytes;
         uchar *dst = image.scanLine(row);
         for (int col = 0; col < width; ++col)
-            dst[col] = uchar(readLe16(src + 2 * col) >> 8);
+            dst[col] = uchar(fullRangeSample(readLe16(src + 2 * col), format) >> 8);
     }
     return image;
 }
 
 // 16-bit variant of stridedPlane(); step and offset are in samples.
 inline RawImageDecoder::ImageResult strided16Plane(const uchar *base, int width, int height,
-                                                   qint64 rowStrideBytes, int step, int offset)
+                                                   qint64 rowStrideBytes, int step, int offset,
+                                                   const RawSampleFormat &format)
 {
     QImage image(width, height, QImage::Format_Grayscale8);
     if (image.isNull())
@@ -294,8 +323,10 @@ inline RawImageDecoder::ImageResult strided16Plane(const uchar *base, int width,
     for (int row = 0; row < height; ++row) {
         const uchar *src = base + qint64(row) * rowStrideBytes;
         uchar *dst = image.scanLine(row);
-        for (int col = 0; col < width; ++col)
-            dst[col] = uchar(readLe16(src + 2 * (col * step + offset)) >> 8);
+        for (int col = 0; col < width; ++col) {
+            dst[col] = uchar(fullRangeSample(readLe16(src + 2 * (col * step + offset)),
+                                             format) >> 8);
+        }
     }
     return image;
 }

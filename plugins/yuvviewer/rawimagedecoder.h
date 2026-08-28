@@ -13,6 +13,26 @@
 
 #include <expected>
 #include <functional>
+#include <optional>
+
+// Where the significant bits of a sample sit inside its 16-bit container.
+//
+// Formats with 8-bit samples have no container and ignore this. The 16-bit
+// container formats need it because the same file can hold, say, 10-bit
+// data either at the top of every 16-bit word (P010's convention, and what
+// ISP outputs tend to use) or at the bottom (what sensor dumps tend to
+// use), and reading one as the other is not a subtle error: right-aligned
+// 10-bit data read as full-range 16-bit spans 1.5% of the range and shows
+// up as a black frame.
+struct RawSampleFormat
+{
+    int bits = 16;           // significant bits per sample
+    bool msbAligned = true;  // at the top of the container, else the bottom
+
+    // Container bits that carry no value; also the shift between the two
+    // alignments.
+    int padding() const { return 16 - bits; }
+};
 
 // Generic layout description for raw (uncompressed) image buffers.
 // stride/scanline describe the first plane; planar formats may interpret
@@ -23,6 +43,9 @@ struct RawImageLayout
     int height = 0;
     int stride = 0;
     int scanline = 0;
+
+    // Only formats reporting a defaultSampleFormat() read this.
+    RawSampleFormat sample;
 };
 
 // Abstract decoder for one raw pixel format (NV12, NV21, I420, RGB888, ...).
@@ -60,6 +83,13 @@ public:
     // row size of the first plane. Packed formats override this because
     // their rows carry more than one byte per pixel.
     virtual int defaultStride(int width) const;
+
+    // Formats whose samples sit in 16-bit containers report the packing
+    // they are conventionally written with. The UI preselects it and lets
+    // the user override it in RawImageLayout::sample, because the file
+    // itself does not say. Formats with 8-bit samples return nullopt and
+    // ignore RawImageLayout::sample entirely.
+    virtual std::optional<RawSampleFormat> defaultSampleFormat() const { return std::nullopt; }
 
     virtual qint64 expectedByteSize(const RawImageLayout &layout) const = 0;
     virtual ImageResult convertToImage(const QByteArray &data,

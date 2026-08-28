@@ -459,6 +459,11 @@ public:
 
     int defaultStride(int width) const override { return width * bytesPerPixel(); }
 
+    std::optional<RawSampleFormat> defaultSampleFormat() const override
+    {
+        return RawSampleFormat{};
+    }
+
     QStringList planeNames() const override
     {
         QStringList names{QStringLiteral("R"), QStringLiteral("G"), QStringLiteral("B")};
@@ -474,7 +479,7 @@ public:
             return invalidPlane(plane);
         const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
         return strided16Plane(pixels, layout.width, layout.height, layout.stride,
-                              bytesPerPixel() / 2, plane);
+                              bytesPerPixel() / 2, plane, layout.sample);
     }
 
     QString describePixel(const QByteArray &data, const RawImageLayout &layout,
@@ -482,17 +487,43 @@ public:
     {
         const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
         const uchar *pixel = pixels + qint64(y) * layout.stride + x * bytesPerPixel();
-        const int r = readLe16(pixel);
-        const int g = readLe16(pixel + 2);
-        const int b = readLe16(pixel + 4);
+        const int r = rawSampleValue(readLe16(pixel), layout.sample);
+        const int g = rawSampleValue(readLe16(pixel + 2), layout.sample);
+        const int b = rawSampleValue(readLe16(pixel + 4), layout.sample);
         if (bytesPerPixel() == 8)
-            return describeRgba(r, g, b, readLe16(pixel + 6));
+            return describeRgba(r, g, b, rawSampleValue(readLe16(pixel + 6), layout.sample));
         return describeRgb(r, g, b);
     }
 
 protected:
     // 6 for RGB48, 8 for RGBA64.
     virtual int bytesPerPixel() const = 0;
+
+    // Samples spanning the full 16-bit range, which is what QImage and the
+    // OpenCV conversions assume. Right-aligned samples are scaled up into
+    // scratch; samples that already span the range are used in place, so
+    // the common case copies nothing. The result is valid while scratch is.
+    const uchar *fullRangeRows(const QByteArray &data, const RawImageLayout &layout,
+                               QByteArray &scratch, int &rowBytes) const
+    {
+        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        if (!sampleNeedsNormalizing(layout.sample)) {
+            rowBytes = layout.stride;
+            return pixels;
+        }
+
+        const int samplesPerRow = layout.width * bytesPerPixel() / 2;
+        rowBytes = samplesPerRow * 2;
+        scratch.resize(qsizetype(rowBytes) * layout.height);
+        auto *destination = reinterpret_cast<quint16 *>(scratch.data());
+        for (int row = 0; row < layout.height; ++row) {
+            const uchar *source = pixels + qint64(row) * layout.stride;
+            quint16 *destinationRow = destination + qint64(row) * samplesPerRow;
+            for (int i = 0; i < samplesPerRow; ++i)
+                destinationRow[i] = fullRangeSample(readLe16(source + 2 * i), layout.sample);
+        }
+        return reinterpret_cast<const uchar *>(scratch.constData());
+    }
 };
 
 class Rgb48Decoder final : public PackedRgb16Decoder
@@ -507,9 +538,11 @@ public:
                                const RawImageLayout &layout) const override
     {
         return runConversion(*this, [&]() -> ImageResult {
-            auto *pixels = reinterpret_cast<uchar *>(const_cast<char *>(data.constData()));
-            cv::Mat rgb(layout.height, layout.width, CV_16UC3, pixels,
-                        static_cast<size_t>(layout.stride));
+            QByteArray scratch;
+            int rowBytes = 0;
+            const uchar *pixels = fullRangeRows(data, layout, scratch, rowBytes);
+            cv::Mat rgb(layout.height, layout.width, CV_16UC3, const_cast<uchar *>(pixels),
+                        static_cast<size_t>(rowBytes));
             // OpenCV preserves the 16-bit depth through the conversion.
             cv::Mat rgba;
             cv::cvtColor(rgb, rgba, cv::COLOR_RGB2RGBA);
@@ -532,10 +565,12 @@ public:
     ImageResult convertToImage(const QByteArray &data,
                                const RawImageLayout &layout) const override
     {
-        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
+        QByteArray scratch;
+        int rowBytes = 0;
+        const uchar *pixels = fullRangeRows(data, layout, scratch, rowBytes);
         // Little-endian 16-bit R,G,B,A samples match QImage::Format_RGBA64.
         const QImage wrappedImage(pixels, layout.width, layout.height,
-                                  static_cast<qsizetype>(layout.stride),
+                                  static_cast<qsizetype>(rowBytes),
                                   QImage::Format_RGBA64);
         QImage image = wrappedImage.copy();
         if (image.isNull())

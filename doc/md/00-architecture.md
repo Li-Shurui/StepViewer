@@ -30,7 +30,7 @@ YUV Viewer 是一个 Qt 插件，实现 `ViewerInterface`（`app/viewerinterface
 | `rawimageframe.h/.cpp` | 帧一致性校验 + 渲染（合成图或单平面） |
 | `rawimagehistogram.h/.cpp` | 逐通道直方图统计与绘图 |
 | `yuvimagewidget.h/.cpp` | 显示控件：缩放、平滑/最近邻、像素网格 |
-| `yuvcontrols.h/.cpp` | 工具栏控件：尺寸、格式、平面、帧号 |
+| `yuvcontrols.h/.cpp` | 工具栏控件：尺寸、格式、样本打包、平面、帧号 |
 | `yuvviewer.h/.cpp` | 编排：生命周期、状态、加载流程、缩放、导出 |
 
 依赖方向是单向的，从下往上：
@@ -55,15 +55,36 @@ yuvviewer  ───────────────┐  编排层，依赖�
 一帧的解释由一个三元组唯一确定：
 
 ```cpp
-struct RawImageLayout { int width, height, stride, scanline; };
+struct RawImageLayout {
+    int width, height, stride, scanline;
+    RawSampleFormat sample;   // 只有 16-bit 容器格式读取
+};
+struct RawSampleFormat { int bits; bool msbAligned; };
 ```
 
 - `width`/`height` 是图像尺寸；
 - `stride` 是首平面**每行的字节数**，可以大于宽度（行填充）；
-- `scanline` 是首平面**实际行数**，可以大于高度（面填充）。
+- `scanline` 是首平面**实际行数**，可以大于高度（面填充）；
+- `sample` 说明有效位在 16 位容器里靠哪一端，见下。
 
 `stride`/`scanline` 描述首平面，各格式在自己的
 `validateLayout()` / `expectedByteSize()` 里决定色度平面怎么推导。
+
+### 样本打包
+
+裸文件同样不会声明**有效位在 16 位容器里的位置**，而两种约定都很常见：
+左对齐（低位补零，P010 的定义，ISP 输出多用）和右对齐（高位为零，
+传感器 dump 多用）。这不是细微差别——把右对齐的 10-bit 数据当成满量程
+16-bit 读，取值只占 1.5% 的范围，显示出来是一张纯黑图。
+
+所以 `RawSampleFormat` 和宽高一样由用户在工具栏指定，只是有个更好的初值：
+报告了 `defaultSampleFormat()` 的格式给出自己的惯例（P010/I010 是 10 位
+左对齐），打开文件时按扩展名选中的格式来播种，之后**换格式不重置**——
+位深描述的是数据，不是用户正在试的那个格式，这一点和宽高一致。
+
+解码层只需要两个原语：`rawSampleValue()` 把容器还原成格式自己的数
+（像素探针报告的就是它），`fullRangeSample()` 把它撑满 16 位（转换和
+8 位显示路径要的是它）。左对齐时后者是恒等变换，所以常见情况不产生拷贝。
 
 贯穿全插件的关键三元组是 **(decoder, data, layout)**。所有按坐标索引缓冲区
 的操作（`convertToImage`、`extractPlane`、`describePixel`）都假设三者自洽，
@@ -78,6 +99,7 @@ struct RawImageLayout { int width, height, stride, scanline; };
 | 像素格式 | 扩展名（`.Y8`/`.nv12`…）> 上次会话保存的格式 > 默认 NV12 |
 | 宽高 | 文件名（`w[..]_h[..]` 或 `1920x1080`）> 上次会话 > 默认 1920×1080 |
 | stride/scanline | 文件名（仅当用户没改动宽高时）> 紧凑排布 |
+| 样本打包 | 扩展名对应格式的惯例 > 上次会话 > 满量程 16 位 |
 
 格式一栏里扩展名压过会话状态，是必须的：`.Y8` 文件套用上次会话的 I420
 会去读根本不存在的色度平面。
@@ -113,6 +135,7 @@ QStringList fileExtensions() const;
 LayoutResult validateLayout(const RawImageLayout &) const;  // 基类只查范围
 int defaultStride(int width) const;                          // 紧凑行宽
 qint64 expectedByteSize(const RawImageLayout &) const;
+std::optional<RawSampleFormat> defaultSampleFormat() const;  // 空表示 8 位样本
 
 // 像素
 ImageResult convertToImage(const QByteArray &, const RawImageLayout &) const;
@@ -168,6 +191,8 @@ GRBG 用 `BayerGB`，GBRG 用 `BayerGR`，BGGR 用 `BayerRG`。
   `runConversion()`（把 OpenCV 异常翻成错误结果）；
 - 平面提取：`grayscalePlane()` / `stridedPlane()` / `rgb16Plane()` /
   `grayscale16Plane()` / `strided16Plane()`；
+- 样本归一化：`rawSampleValue()` / `fullRangeSample()` /
+  `sampleNeedsNormalizing()`；
 - 像素描述：`describeYuv()` / `describeYuva()` / `describeRgb()` /
   `describeRgba()`。
 
@@ -211,9 +236,12 @@ viewer 实例由 `ViewerFactory` 长期持有并**复用**：换文件走
   在整个进程生命周期里都活着。
 
 会话状态（`saveState()` / `restoreState()`）用 `QDataStream` 依次写入
-viewer 名、宽、高、格式 id、帧号、平面索引。字段是逐版本追加的，
-读取时用 `atEnd()` 判断，旧状态文件仍可读。格式存的是 `id()` 字符串而非
-下拉框序号，所以调整格式顺序不会让旧状态错位。
+viewer 名、宽、高、格式 id、帧号、平面索引、样本位深与对齐。字段是逐版本
+追加的，读取时用 `atEnd()` 判断，旧状态文件仍可读。格式存的是 `id()`
+字符串而非下拉框序号，所以调整格式顺序不会让旧状态错位。
+
+格式和样本打包都遵循同一条规则：**明确的扩展名压过会话状态**。`.p010`
+文件就是 10 位左对齐，不管上次打开的是什么。
 
 ## 安全约束
 

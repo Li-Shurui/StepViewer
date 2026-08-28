@@ -178,14 +178,14 @@ public:
                 const uchar *src = pixels + qint64(row) * layout.stride;
                 uchar *dst = yDst + qint64(row) * layout.width;
                 for (int col = 0; col < layout.width; ++col)
-                    dst[col] = uchar(readLe16(src + 2 * col) >> 8);
+                    dst[col] = uchar(fullRangeSample(readLe16(src + 2 * col), layout.sample) >> 8);
             }
             const int chromaSamples = layout.width;  // interleaved U+V per row
             for (int row = 0; row < layout.height / 2; ++row) {
                 const uchar *src = pixels + yPlaneBytes + qint64(row) * layout.stride;
                 uchar *dst = uvDst + qint64(row) * chromaSamples;
                 for (int col = 0; col < chromaSamples; ++col)
-                    dst[col] = uchar(readLe16(src + 2 * col) >> 8);
+                    dst[col] = uchar(fullRangeSample(readLe16(src + 2 * col), layout.sample) >> 8);
             }
 
             cv::Mat yPlane(layout.height, layout.width, CV_8UC1, yDst,
@@ -210,13 +210,14 @@ public:
         const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
         switch (plane) {
         case 0:
-            return grayscale16Plane(pixels, layout.width, layout.height, layout.stride);
+            return grayscale16Plane(pixels, layout.width, layout.height, layout.stride,
+                                    layout.sample);
         case 1:
             return strided16Plane(pixels + yPlaneBytes, layout.width / 2, layout.height / 2,
-                                  layout.stride, 2, 0);
+                                  layout.stride, 2, 0, layout.sample);
         case 2:
             return strided16Plane(pixels + yPlaneBytes, layout.width / 2, layout.height / 2,
-                                  layout.stride, 2, 1);
+                                  layout.stride, 2, 1, layout.sample);
         default:
             return invalidPlane(plane);
         }
@@ -227,19 +228,14 @@ public:
     {
         const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
         const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
-        const int shift = 16 - bitDepth();
-        const int luma = readLe16(pixels + qint64(y) * layout.stride + 2 * x) >> shift;
+        const int luma = rawSampleValue(readLe16(pixels + qint64(y) * layout.stride + 2 * x),
+                                        layout.sample);
         const uchar *chroma = pixels + yPlaneBytes + qint64(y / 2) * layout.stride
                               + (x / 2) * 4;
-        const int u = readLe16(chroma) >> shift;
-        const int v = readLe16(chroma + 2) >> shift;
+        const int u = rawSampleValue(readLe16(chroma), layout.sample);
+        const int v = rawSampleValue(readLe16(chroma + 2), layout.sample);
         return describeYuv(luma, u, v);
     }
-
-protected:
-    // 10 for P010, 16 for P016. Both are MSB-aligned, so the top 8 bits
-    // always carry the most significant part of the sample.
-    virtual int bitDepth() const = 0;
 };
 
 class P010Decoder final : public SemiPlanarYuv420p16Decoder
@@ -250,8 +246,10 @@ public:
     QString mimeType() const override { return "video/x-raw-p010"_L1; }
     QStringList fileExtensions() const override { return {"p010"_L1, "P010"_L1}; }
 
-protected:
-    int bitDepth() const override { return 10; }
+    std::optional<RawSampleFormat> defaultSampleFormat() const override
+    {
+        return RawSampleFormat{10, true};
+    }
 };
 
 class P016Decoder final : public SemiPlanarYuv420p16Decoder
@@ -262,8 +260,10 @@ public:
     QString mimeType() const override { return "video/x-raw-p016"_L1; }
     QStringList fileExtensions() const override { return {"p016"_L1, "P016"_L1}; }
 
-protected:
-    int bitDepth() const override { return 16; }
+    std::optional<RawSampleFormat> defaultSampleFormat() const override
+    {
+        return RawSampleFormat{16, true};
+    }
 };
 
 // Shared implementation for three-plane (planar) YUV 4:2:0 formats:
@@ -464,7 +464,7 @@ public:
                 for (int row = 0; row < planeRows[plane]; ++row) {
                     const uchar *src = planeSrc[plane] + qint64(row) * planeStride[plane];
                     for (int col = 0; col < planeSamples[plane]; ++col)
-                        *dst++ = uchar(readLe16(src + 2 * col) >> 8);
+                        *dst++ = uchar(fullRangeSample(readLe16(src + 2 * col), layout.sample) >> 8);
                 }
             }
 
@@ -489,13 +489,15 @@ public:
         const qint64 chromaPlaneBytes = qint64(layout.stride / 2) * (layout.scanline / 2);
         switch (plane) {
         case 0:
-            return grayscale16Plane(pixels, layout.width, layout.height, layout.stride);
+            return grayscale16Plane(pixels, layout.width, layout.height, layout.stride,
+                                    layout.sample);
         case 1:
             return grayscale16Plane(pixels + yPlaneBytes, layout.width / 2,
-                                    layout.height / 2, layout.stride / 2);
+                                    layout.height / 2, layout.stride / 2, layout.sample);
         case 2:
             return grayscale16Plane(pixels + yPlaneBytes + chromaPlaneBytes,
-                                    layout.width / 2, layout.height / 2, layout.stride / 2);
+                                    layout.width / 2, layout.height / 2, layout.stride / 2,
+                                    layout.sample);
         default:
             return invalidPlane(plane);
         }
@@ -508,18 +510,16 @@ public:
         const qint64 yPlaneBytes = qint64(layout.stride) * layout.scanline;
         const qint64 chromaStride = layout.stride / 2;
         const qint64 chromaPlaneBytes = chromaStride * (layout.scanline / 2);
-        const int shift = 16 - bitDepth();
-        const int luma = readLe16(pixels + qint64(y) * layout.stride + 2 * x) >> shift;
-        const int u = readLe16(pixels + yPlaneBytes + qint64(y / 2) * chromaStride
-                               + 2 * (x / 2)) >> shift;
-        const int v = readLe16(pixels + yPlaneBytes + chromaPlaneBytes
-                               + qint64(y / 2) * chromaStride + 2 * (x / 2)) >> shift;
+        const int luma = rawSampleValue(readLe16(pixels + qint64(y) * layout.stride + 2 * x),
+                                        layout.sample);
+        const int u = rawSampleValue(readLe16(pixels + yPlaneBytes
+                                              + qint64(y / 2) * chromaStride + 2 * (x / 2)),
+                                     layout.sample);
+        const int v = rawSampleValue(readLe16(pixels + yPlaneBytes + chromaPlaneBytes
+                                              + qint64(y / 2) * chromaStride + 2 * (x / 2)),
+                                     layout.sample);
         return describeYuv(luma, u, v);
     }
-
-protected:
-    // 10 for I010, 16 for I016. Both are MSB-aligned.
-    virtual int bitDepth() const = 0;
 };
 
 class I010Decoder final : public PlanarYuv420p16Decoder
@@ -530,8 +530,10 @@ public:
     QString mimeType() const override { return "video/x-raw-i010"_L1; }
     QStringList fileExtensions() const override { return {"i010"_L1, "I010"_L1}; }
 
-protected:
-    int bitDepth() const override { return 10; }
+    std::optional<RawSampleFormat> defaultSampleFormat() const override
+    {
+        return RawSampleFormat{10, true};
+    }
 };
 
 class I016Decoder final : public PlanarYuv420p16Decoder
@@ -542,8 +544,10 @@ public:
     QString mimeType() const override { return "video/x-raw-i016"_L1; }
     QStringList fileExtensions() const override { return {"i016"_L1, "I016"_L1}; }
 
-protected:
-    int bitDepth() const override { return 16; }
+    std::optional<RawSampleFormat> defaultSampleFormat() const override
+    {
+        return RawSampleFormat{16, true};
+    }
 };
 
 // Shared implementation for packed (interleaved) YUV 4:2:2 formats:
