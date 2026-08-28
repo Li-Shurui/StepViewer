@@ -767,9 +767,13 @@ File: %1</source>
         <translation>导出</translation>
     </message>
     <message>
-        <location filename="yuvviewer.cpp" line="791"/>
-        <source>YUV Image</source>
-        <translation>YUV 图像</translation>
+        <source>YUV Layout</source>
+        <translation type="vanished">YUV 布局</translation>
+    </message>
+    <message>
+        <location filename="yuvviewer.cpp" line="901"/>
+        <source>YUV View</source>
+        <translation>YUV 显示</translation>
     </message>
     <message>
         <source>Width:</source>

@@ -7,12 +7,14 @@
 #include "rawimageframe.h"
 
 #include <QAbstractSpinBox>
+#include <QAction>
 #include <QComboBox>
 #include <QFont>
 #include <QLabel>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QToolBar>
+#include <QWidget>
 #include <QtMath>
 
 #include <climits>
@@ -59,12 +61,18 @@ constexpr DisplayPreset displayPresets[] = {
 };
 } // namespace
 
-YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
+YuvControls::YuvControls(QToolBar *layoutBar, QToolBar *viewBar, QAction *reloadAction)
+    : QObject(viewBar)
+    , m_layoutBar(layoutBar)
 {
-    Q_ASSERT(toolBar);
+    Q_ASSERT(layoutBar);
+    Q_ASSERT(viewBar);
+    Q_ASSERT(reloadAction);
 
-    const auto makeDimensionSpinBox = [toolBar](int initialValue) {
-        auto *spinBox = new QSpinBox(toolBar);
+    m_layoutSeparator = layoutBar->addSeparator();
+
+    const auto makeDimensionSpinBox = [layoutBar](int initialValue) {
+        auto *spinBox = new QSpinBox(layoutBar);
         spinBox->setRange(RawImageDecoder::minimumDimension, RawImageDecoder::maximumDimension);
         // Most raw formats subsample chroma by two, so odd sizes are
         // rarely what the user wants to step through.
@@ -74,49 +82,49 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
         return spinBox;
     };
 
-    m_widthLabel = new QLabel(toolBar);
+    m_widthLabel = new QLabel(layoutBar);
     m_widthSpinBox = makeDimensionSpinBox(1920);
-    m_heightLabel = new QLabel(toolBar);
+    m_heightLabel = new QLabel(layoutBar);
     m_heightSpinBox = makeDimensionSpinBox(1080);
 
-    m_strideLabel = new QLabel(toolBar);
-    m_strideSpinBox = new QSpinBox(toolBar);
+    m_strideLabel = new QLabel(layoutBar);
+    m_strideSpinBox = new QSpinBox(layoutBar);
     m_strideSpinBox->setRange(1, RawImageDecoder::maximumStride);
     m_strideSpinBox->setKeyboardTracking(false);
     m_strideSpinBox->setValue(1920);
 
-    m_scanlineLabel = new QLabel(toolBar);
-    m_scanlineSpinBox = new QSpinBox(toolBar);
+    m_scanlineLabel = new QLabel(layoutBar);
+    m_scanlineSpinBox = new QSpinBox(layoutBar);
     m_scanlineSpinBox->setRange(RawImageDecoder::minimumDimension,
                                 RawImageDecoder::maximumDimension);
     m_scanlineSpinBox->setKeyboardTracking(false);
     m_scanlineSpinBox->setValue(1080);
 
-    m_formatLabel = new QLabel(toolBar);
-    m_formatComboBox = new QComboBox(toolBar);
+    m_formatLabel = new QLabel(layoutBar);
+    m_formatComboBox = new QComboBox(layoutBar);
     for (const RawImageDecoder *decoder : RawImageDecoders::all()) {
         m_formatComboBox->addItem(decoder->displayName());
         m_formatComboBox->setMinimumContentsLength(12);
         m_formatComboBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     }
 
-    m_sampleLabel = new QLabel(toolBar);
-    m_sampleComboBox = new QComboBox(toolBar);
+    m_sampleLabel = new QLabel(layoutBar);
+    m_sampleComboBox = new QComboBox(layoutBar);
     fillSampleFormats();
 
-    m_displayLabel = new QLabel(toolBar);
-    m_displayComboBox = new QComboBox(toolBar);
+    m_displayLabel = new QLabel(viewBar);
+    m_displayComboBox = new QComboBox(viewBar);
     fillDisplayModes();
 
-    m_planeLabel = new QLabel(toolBar);
-    m_planeComboBox = new QComboBox(toolBar);
+    m_planeLabel = new QLabel(viewBar);
+    m_planeComboBox = new QComboBox(viewBar);
 
-    m_frameLabel = new QLabel(toolBar);
-    m_frameSpinBox = new QSpinBox(toolBar);
+    m_frameLabel = new QLabel(viewBar);
+    m_frameSpinBox = new QSpinBox(viewBar);
     m_frameSpinBox->setRange(1, 1);
     m_frameSpinBox->setKeyboardTracking(false);
     m_frameSpinBox->setEnabled(false);
-    m_frameCountLabel = new QLabel(toolBar);
+    m_frameCountLabel = new QLabel(viewBar);
 
     // A changed frame size does not reload by itself; it only re-runs the
     // format hint and refreshes auto stride/scanline. The user confirms
@@ -139,29 +147,84 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
     connect(m_planeComboBox, &QComboBox::activated, this, &YuvControls::planeSelected);
     connect(m_frameSpinBox, &QSpinBox::valueChanged, this, &YuvControls::frameSelected);
 
-    toolBar->addWidget(m_widthLabel);
-    toolBar->addWidget(m_widthSpinBox);
-    toolBar->addWidget(m_heightLabel);
-    toolBar->addWidget(m_heightSpinBox);
-    toolBar->addWidget(m_strideLabel);
-    toolBar->addWidget(m_strideSpinBox);
-    toolBar->addWidget(m_scanlineLabel);
-    toolBar->addWidget(m_scanlineSpinBox);
-    toolBar->addWidget(m_formatLabel);
-    toolBar->addWidget(m_formatComboBox);
-    toolBar->addWidget(m_sampleLabel);
-    toolBar->addWidget(m_sampleComboBox);
-    toolBar->addWidget(m_displayLabel);
-    toolBar->addWidget(m_displayComboBox);
-    toolBar->addWidget(m_planeLabel);
-    toolBar->addWidget(m_planeComboBox);
-    toolBar->addWidget(m_frameLabel);
-    toolBar->addWidget(m_frameSpinBox);
-    toolBar->addWidget(m_frameCountLabel);
+    layoutBar->addWidget(m_widthLabel);
+    layoutBar->addWidget(m_widthSpinBox);
+    layoutBar->addWidget(m_heightLabel);
+    layoutBar->addWidget(m_heightSpinBox);
+    layoutBar->addWidget(m_strideLabel);
+    layoutBar->addWidget(m_strideSpinBox);
+    layoutBar->addWidget(m_scanlineLabel);
+    layoutBar->addWidget(m_scanlineSpinBox);
+    layoutBar->addWidget(m_formatLabel);
+    layoutBar->addWidget(m_formatComboBox);
+    layoutBar->addWidget(m_sampleLabel);
+    layoutBar->addWidget(m_sampleComboBox);
+    m_reloadSeparator = layoutBar->addSeparator();
+    layoutBar->addAction(reloadAction);
+    m_hostedReload = reloadAction;
+
+    viewBar->addWidget(m_displayLabel);
+    viewBar->addWidget(m_displayComboBox);
+    viewBar->addWidget(m_planeLabel);
+    viewBar->addWidget(m_planeComboBox);
+    viewBar->addWidget(m_frameLabel);
+    viewBar->addWidget(m_frameSpinBox);
+    viewBar->addWidget(m_frameCountLabel);
 
     rebuildPlanes();
     updateSampleFormatEnabled();
     applyPadding();
+}
+
+YuvControls::~YuvControls()
+{
+    // Width/format widgets live on the main window's Open bar, which
+    // outlives this viewer. Leave them there and they pile up on every
+    // file change; pull them off only when that is the bar we used.
+    if (!m_layoutBar || m_layoutBar->objectName() != QLatin1String("mainToolBar"))
+        return;
+
+    if (m_layoutSeparator) {
+        m_layoutBar->removeAction(m_layoutSeparator);
+        delete m_layoutSeparator;
+        m_layoutSeparator = nullptr;
+    }
+
+    const auto takeWidget = [this](QWidget *widget) {
+        if (!widget)
+            return;
+        for (QAction *action : m_layoutBar->actions()) {
+            if (m_layoutBar->widgetForAction(action) == widget) {
+                m_layoutBar->removeAction(action);
+                delete action;
+                return;
+            }
+        }
+        delete widget;
+    };
+
+    takeWidget(m_widthLabel);
+    takeWidget(m_widthSpinBox);
+    takeWidget(m_heightLabel);
+    takeWidget(m_heightSpinBox);
+    takeWidget(m_strideLabel);
+    takeWidget(m_strideSpinBox);
+    takeWidget(m_scanlineLabel);
+    takeWidget(m_scanlineSpinBox);
+    takeWidget(m_formatLabel);
+    takeWidget(m_formatComboBox);
+    takeWidget(m_sampleLabel);
+    takeWidget(m_sampleComboBox);
+
+    if (m_hostedReload) {
+        m_layoutBar->removeAction(m_hostedReload);
+        m_hostedReload = nullptr;
+    }
+    if (m_reloadSeparator) {
+        m_layoutBar->removeAction(m_reloadSeparator);
+        delete m_reloadSeparator;
+        m_reloadSeparator = nullptr;
+    }
 }
 
 int YuvControls::imageWidth() const
