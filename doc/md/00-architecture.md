@@ -31,7 +31,7 @@ YUV Viewer 是一个 Qt 插件，实现 `ViewerInterface`（`app/viewerinterface
 | `rawimagehistogram.h/.cpp` | 逐通道直方图统计与绘图 |
 | `rawimagedisplay.h/.cpp` | 显示变换：自动电平、灰世界白平衡、Gamma（不改样本） |
 | `yuvimagewidget.h/.cpp` | 显示控件：缩放、平滑/最近邻、像素网格 |
-| `yuvcontrols.h/.cpp` | 工具栏控件：尺寸、stride/scanline、格式、样本打包、显示预设、平面、帧号 |
+| `yuvcontrols.h/.cpp` | 工具栏控件：宽高/stride/格式/样本/Reload 挂在主窗口 Open 工具栏，显示预设、平面、帧号在下一行 |
 | `yuvviewer.h/.cpp` | 编排：生命周期、状态、加载流程、缩放、导出 |
 
 依赖方向是单向的，从下往上：
@@ -124,7 +124,7 @@ NV12 的 4096 带到 Bayer 上。`_stride[` / `_scanline[` 写了却不是合法
 
 具体时序：
 
-1. `init()` 建显示控件和工具栏，按扩展名选解码器，用
+1. `init()` 建显示控件：宽高/stride/格式/样本/Reload 加到主窗口 Open 工具栏同一行，显示/平面/缩放另起一行；按扩展名选解码器，用
    `RawImageFileName::layout()` / `metadata()` 解析文件名；
 2. `AbstractViewer` 发 `uiInitialized`，`setupYuvUi()` 建"Info"和
    "Histogram"两个概览页，若文件名给出了布局就请求加载；
@@ -254,7 +254,7 @@ viewer 实例由 `ViewerFactory` 长期持有并**复用**：换文件走
 
 - `cleanup()` 会删掉工具栏、概览页等挂在主窗口下的东西，所以
   `YuvViewer` 里指向它们的成员一律是 `QPointer`，删除后自动置空；
-  `YuvControls` 挂在工具栏名下当子对象，跟着工具栏一起走；
+  `YuvControls` 挂在第二行 view 工具栏下；析构时从 Open 工具栏摘掉布局控件，避免换文件后控件堆在 Open 旁边；
 - `cleanup()` 必须释放帧缓冲。一帧 4096×3072 就是十几 MB，而实例可能
   在整个进程生命周期里都活着。
 

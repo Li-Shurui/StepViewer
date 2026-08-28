@@ -9,10 +9,12 @@
 #include "rawimagefilename.h"
 
 #include <QObject>
+#include <QPointer>
 #include <QString>
 
 #include <optional>
 
+class QAction;
 class QComboBox;
 class QLabel;
 class QSpinBox;
@@ -22,16 +24,17 @@ class QToolBar;
 // size, row/plane padding, pixel format, sample packing, display transform,
 // component plane and frame number.
 //
-// The instance is parented to the toolbar it populates, so it dies
-// together with the widgets it refers to. Hold it in a QPointer and the
-// viewer never sees a dangling control.
+// Width/format fields and Reload are added to the main window's Open
+// toolbar so they sit on that same row. View/plane/frame live on a
+// second bar below. The instance is parented to the view bar, which
+// cleanup() deletes.
 class YuvControls : public QObject
 {
     Q_OBJECT
 
 public:
-    // Creates the controls and appends them to toolBar in reading order.
-    explicit YuvControls(QToolBar *toolBar);
+    YuvControls(QToolBar *layoutBar, QToolBar *viewBar, QAction *reloadAction);
+    ~YuvControls() override;
 
     int imageWidth() const;
     int imageHeight() const;
@@ -111,6 +114,13 @@ private:
     bool namedPaddingApplies() const;
     // Only the formats with 16-bit containers read the packing.
     void updateSampleFormatEnabled();
+
+    // The bar that holds width/format. May be the main window toolbar,
+    // which outlives this object; the destructor then removes our widgets.
+    QPointer<QToolBar> m_layoutBar;
+    QAction *m_layoutSeparator = nullptr;
+    QAction *m_reloadSeparator = nullptr;
+    QAction *m_hostedReload = nullptr;
 
     QLabel *m_widthLabel = nullptr;
     QLabel *m_heightLabel = nullptr;

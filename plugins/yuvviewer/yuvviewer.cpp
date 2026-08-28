@@ -28,6 +28,7 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QLocale>
+#include <QMainWindow>
 #include <QMouseEvent>
 #include <QPixmap>
 #include <QStatusBar>
@@ -175,8 +176,20 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
 
 void YuvViewer::setupToolBar()
 {
-    QToolBar *toolBar = addToolBar();
-    m_controls = new YuvControls(toolBar);
+    // Width/format/Reload sit on the main window's Open bar, not a
+    // second bar that Qt wraps onto its own row. A missing mainToolBar
+    // is rare; fall back to a viewer-owned bar so the controls still appear.
+    QToolBar *layoutBar = mainWindow()->findChild<QToolBar *>(u"mainToolBar"_s);
+    if (!layoutBar) {
+        layoutBar = addToolBar();
+        layoutBar->setObjectName(viewerName() + "LayoutToolBar"_L1);
+    }
+
+    QToolBar *viewBar = addToolBar();
+    viewBar->setObjectName(viewerName() + "ViewToolBar"_L1);
+    mainWindow()->insertToolBarBreak(viewBar);
+
+    m_controls = new YuvControls(layoutBar, viewBar, m_reloadAction);
     connect(m_controls, &YuvControls::formatSelected, this, &YuvViewer::onFormatSelected);
     connect(m_controls, &YuvControls::sampleFormatSelected, this, &YuvViewer::requestReload);
     connect(m_controls, &YuvControls::displayOptionsSelected, this,
@@ -184,17 +197,16 @@ void YuvViewer::setupToolBar()
     connect(m_controls, &YuvControls::planeSelected, this, &YuvViewer::onPlaneSelected);
     connect(m_controls, &YuvControls::frameSelected, this, &YuvViewer::requestReload);
 
-    toolBar->addAction(m_reloadAction);
-    toolBar->addSeparator();
-    toolBar->addAction(m_zoomInAction);
-    toolBar->addAction(m_zoomOutAction);
-    toolBar->addAction(m_resetZoomAction);
-    toolBar->addAction(m_fitToWindowAction);
-    toolBar->addSeparator();
-    toolBar->addAction(m_smoothScalingAction);
-    toolBar->addAction(m_pixelGridAction);
-    toolBar->addSeparator();
-    toolBar->addAction(m_exportAction);
+    viewBar->addSeparator();
+    viewBar->addAction(m_zoomInAction);
+    viewBar->addAction(m_zoomOutAction);
+    viewBar->addAction(m_resetZoomAction);
+    viewBar->addAction(m_fitToWindowAction);
+    viewBar->addSeparator();
+    viewBar->addAction(m_smoothScalingAction);
+    viewBar->addAction(m_pixelGridAction);
+    viewBar->addSeparator();
+    viewBar->addAction(m_exportAction);
 }
 
 void YuvViewer::setupYuvUi()
@@ -884,7 +896,7 @@ void YuvViewer::retranslate()
     m_exportAction->setText(tr("&Export..."));
 
     if (!toolBars().isEmpty())
-        toolBars().constFirst()->setWindowTitle(tr("YUV Image"));
+        toolBars().constFirst()->setWindowTitle(tr("YUV View"));
     if (m_controls)
         m_controls->retranslate();
 
