@@ -4,6 +4,7 @@
 #include "yuvviewer.h"
 
 #include "rawimagedecoder.h"
+#include "rawimagedisplay.h"
 #include "rawimagefilename.h"
 #include "rawimageframe.h"
 #include "rawimagehistogram.h"
@@ -21,6 +22,8 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFrame>
+#include <QFuture>
+#include <QFutureWatcher>
 #include <QIcon>
 #include <QKeySequence>
 #include <QLabel>
@@ -31,6 +34,7 @@
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QToolBar>
+#include <QtConcurrentRun>
 
 #include <exception>
 #include <new>
@@ -153,7 +157,7 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
     m_metadataError.clear();
     m_fileNameMetadata = RawImageFileName::metadata(fileName);
 
-    const auto parsedLayout = RawImageFileName::layout(fileName, *m_decoder);
+    const auto parsedLayout = RawImageFileName::layout(fileName);
     if (!parsedLayout) {
         m_metadataError = parsedLayout.error();
     } else if (parsedLayout->has_value()) {
@@ -171,6 +175,8 @@ void YuvViewer::setupToolBar()
     m_controls = new YuvControls(toolBar);
     connect(m_controls, &YuvControls::formatSelected, this, &YuvViewer::onFormatSelected);
     connect(m_controls, &YuvControls::sampleFormatSelected, this, &YuvViewer::requestReload);
+    connect(m_controls, &YuvControls::displayOptionsSelected, this,
+            &YuvViewer::onDisplayOptionsSelected);
     connect(m_controls, &YuvControls::planeSelected, this, &YuvViewer::onPlaneSelected);
     connect(m_controls, &YuvControls::frameSelected, this, &YuvViewer::requestReload);
 
@@ -252,6 +258,8 @@ QByteArray YuvViewer::saveState() const
     stream << m_controls->plane() + 1;
     const RawSampleFormat sample = m_controls->sampleFormat();
     stream << sample.bits << sample.msbAligned;
+    const RawImageDisplayOptions display = m_controls->displayOptions();
+    stream << display.autoLevel << display.grayWorldBalance << display.gamma;
     return state;
 }
 
@@ -318,6 +326,14 @@ bool YuvViewer::restoreState(QByteArray &state)
         }
     }
 
+    // States saved before the display transform end after the packing.
+    if (!stream.atEnd()) {
+        RawImageDisplayOptions display;
+        stream >> display.autoLevel >> display.grayWorldBalance >> display.gamma;
+        if (stream.status() == QDataStream::Ok)
+            m_controls->setDisplayOptions(display);
+    }
+
     // The file name wins over the saved size; without one, the size from
     // the previous session is the best guess available.
     if (!m_fileLayout && m_metadataError.isEmpty())
@@ -365,11 +381,15 @@ void YuvViewer::reload()
     const int height = m_controls->imageHeight();
     RawImageLayout requestedLayout{width, height, m_decoder->defaultStride(width), height};
     requestedLayout.sample = m_controls->sampleFormat();
-    // Padding from the file name only applies while the user keeps the
-    // frame size the name declared.
+    // Only `_stride[N]` / `_scanline[N]` in the name are padding. A WxH
+    // name does not remember the previous format's tight row: that is
+    // what made a .raw file keep NV12's width-as-stride after the user
+    // switched to Bayer.
     if (m_fileLayout && width == m_fileLayout->width && height == m_fileLayout->height) {
-        requestedLayout.stride = m_fileLayout->stride;
-        requestedLayout.scanline = m_fileLayout->scanline;
+        if (m_fileLayout->stride)
+            requestedLayout.stride = *m_fileLayout->stride;
+        if (m_fileLayout->scanline)
+            requestedLayout.scanline = *m_fileLayout->scanline;
     }
 
     // Layout validation is cheap and stays synchronous; only file reading
@@ -445,7 +465,7 @@ void YuvViewer::reload()
             m_loadedDecoder = decoder;
             m_rawData = std::move(result->data);
             m_layout = loadLayout;
-            displayImage(result->image);
+            showDecoded(result->image);
             if (m_histogramLabel)
                 m_histogramLabel->setPixmap(QPixmap::fromImage(result->histogram));
             updateInfoTab(loadLayout, decoder);
@@ -472,7 +492,9 @@ void YuvViewer::cleanup()
 {
     // A closed file must not keep its frame buffer alive: raw frames run
     // into tens of megabytes and the viewer object is reused, not deleted.
+    ++m_displayGeneration;
     releaseFrame();
+    m_decodedImage = QImage();
     m_image = QImage();
     m_fileNameMetadata.clear();
     m_fileLayout.reset();
@@ -532,7 +554,7 @@ void YuvViewer::onPlaneSelected()
                 reportError(result.error());
                 return;
             }
-            displayImage(*result);
+            showDecoded(*result);
         });
 }
 
@@ -547,12 +569,71 @@ void YuvViewer::clear()
     if (m_histogramLabel)
         m_histogramLabel->clear();
 
+    ++m_displayGeneration;
     releaseFrame();
+    m_decodedImage = QImage();
     m_image = QImage();
     m_imageSize = {};
     m_maxScaleFactor = m_minScaleFactor = m_initialScaleFactor = m_scaleFactor = 1;
     updateZoomActions();
     disablePrinting();
+}
+
+void YuvViewer::onDisplayOptionsSelected()
+{
+    // The decoded frame is already in memory; only the view has to change.
+    if (m_decodedImage.isNull())
+        return;
+    applyDisplayAndShow();
+}
+
+void YuvViewer::showDecoded(const QImage &decoded)
+{
+    m_decodedImage = decoded;
+    applyDisplayAndShow();
+}
+
+void YuvViewer::applyDisplayAndShow()
+{
+    if (m_decodedImage.isNull())
+        return;
+
+    // Invalidates an in-flight apply, including one left over from the
+    // previous file. Must not go through startAsyncTask(): that bumps the
+    // viewer's task generation and would discard a load or a plane switch.
+    ++m_displayGeneration;
+    const int generation = m_displayGeneration;
+
+    const RawImageDisplayOptions options = m_controls
+        ? m_controls->displayOptions() : RawImageDisplayOptions{};
+    if (options.isIdentity()) {
+        displayImage(m_decodedImage);
+        return;
+    }
+
+    const QImage decoded = m_decodedImage;
+    auto *watcher = new QFutureWatcher<QImage>(this);
+    QFuture<QImage> future = QtConcurrent::run([decoded, options] {
+        try {
+            return RawImageDisplay::apply(decoded, options);
+        } catch (const std::bad_alloc &) {
+            return QImage();
+        } catch (const std::exception &) {
+            return QImage();
+        } catch (...) {
+            return QImage();
+        }
+    });
+    connect(watcher, &QFutureWatcherBase::finished, this,
+            [this, watcher, generation, future]() mutable {
+                watcher->deleteLater();
+                if (generation != m_displayGeneration)
+                    return;
+                QImage shown = future.takeResult();
+                if (!shown.isNull())
+                    displayImage(shown);
+            });
+    watcher->setFuture(future);
 }
 
 void YuvViewer::displayImage(const QImage &image)
@@ -753,7 +834,7 @@ void YuvViewer::exportImage()
         return;
 
     // Export exactly what is on screen: the composite rendering or the
-    // selected component plane.
+    // selected component plane, after the display transform.
     QString suggestion = QFileInfo(m_file->fileName()).completeBaseName();
     if (m_controls) {
         if (m_frameCount > 1)

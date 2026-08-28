@@ -29,8 +29,9 @@ YUV Viewer 是一个 Qt 插件，实现 `ViewerInterface`（`app/viewerinterface
 | `rawimagefilename.h/.cpp` | 从文件名解析布局与元数据 |
 | `rawimageframe.h/.cpp` | 帧一致性校验 + 渲染（合成图或单平面） |
 | `rawimagehistogram.h/.cpp` | 逐通道直方图统计与绘图 |
+| `rawimagedisplay.h/.cpp` | 显示变换：自动电平、灰世界白平衡、Gamma（不改样本） |
 | `yuvimagewidget.h/.cpp` | 显示控件：缩放、平滑/最近邻、像素网格 |
-| `yuvcontrols.h/.cpp` | 工具栏控件：尺寸、格式、样本打包、平面、帧号 |
+| `yuvcontrols.h/.cpp` | 工具栏控件：尺寸、格式、样本打包、显示预设、平面、帧号 |
 | `yuvviewer.h/.cpp` | 编排：生命周期、状态、加载流程、缩放、导出 |
 
 依赖方向是单向的，从下往上：
@@ -39,14 +40,15 @@ YUV Viewer 是一个 Qt 插件，实现 `ViewerInterface`（`app/viewerinterface
 yuvviewer  ───────────────┐  编排层，依赖以下全部
   yuvcontrols             │  UI 层
   yuvimagewidget         ─┤  （只依赖 Qt）
-    rawimagehistogram     │  纯逻辑层，无 UI、可在工作线程调用
+    rawimagedisplay       │  纯逻辑层，无 UI、可在工作线程调用
+    rawimagehistogram     │
     rawimagefilename      │
     rawimageframe        ─┤
       rawimagedecoder     │  解码层
       rawimagedecoder_p  ─┘
 ```
 
-下层不知道上层的存在：`rawimage*` 四个模块不含任何 widget 代码，也不引用
+下层不知道上层的存在：`rawimage*` 模块不含任何 widget 代码，也不引用
 `YuvViewer`，因此都能在工作线程里直接调用。OpenCV 只出现在解码层
 （外加 `yuvviewer.cpp` 里一行关闭优化路径的调用）。
 
@@ -90,6 +92,16 @@ struct RawSampleFormat { int bits; bool msbAligned; };
 的操作（`convertToImage`、`extractPlane`、`describePixel`）都假设三者自洽，
 一旦不自洽就是越界读。见下面的"安全约束"。
 
+### 显示变换
+
+解码结果是线性的，而且经常只用了容器的一小段（10-bit LSB 的均值大约是
+满量程的十分之一）。忠实显示就是一张发黑发绿的图。`RawImageDisplay`
+在解码图和屏幕之间做一层**只影响显示**的变换：自动电平（按 99.5%
+分位拉伸，避免热像素定增益）、灰世界白平衡、以及编码 Gamma。默认是
+线性，像素保持原样，直到用户在工具栏的 **View** 下拉框里选预设。
+
+探针和直方图继续读 `m_rawData`，数字不随显示走。导出走屏幕上的那张图。
+
 ## 打开一个文件
 
 裸图没有头，所以"该怎么解释"有三个信息源，按优先级合并：
@@ -98,11 +110,14 @@ struct RawSampleFormat { int bits; bool msbAligned; };
 | --- | --- |
 | 像素格式 | 扩展名（`.Y8`/`.nv12`…）> 上次会话保存的格式 > 默认 NV12 |
 | 宽高 | 文件名（`w[..]_h[..]` 或 `1920x1080`）> 上次会话 > 默认 1920×1080 |
-| stride/scanline | 文件名（仅当用户没改动宽高时）> 紧凑排布 |
+| stride/scanline | 文件名里显式写出的 `_stride[N]` / `_scanline[N]`（仅当用户没改动宽高）> 当前格式的紧凑排布 |
 | 样本打包 | 扩展名对应格式的惯例 > 上次会话 > 满量程 16 位 |
+| 显示变换 | 上次会话 > 线性（原样显示） |
 
 格式一栏里扩展名压过会话状态，是必须的：`.Y8` 文件套用上次会话的 I420
-会去读根本不存在的色度平面。
+会去读根本不存在的色度平面。文件名里的 `4096x3072` 只提供宽高；stride
+始终按**当前**格式的紧凑行宽计算，换格式不会记住上一次（例如 `.raw`
+默认 NV12 的 4096）。只有名字里写了 `_stride[N]` 才把 padding 钉住。
 
 具体时序：
 
@@ -110,12 +125,13 @@ struct RawSampleFormat { int bits; bool msbAligned; };
    `RawImageFileName::layout()` / `metadata()` 解析文件名；
 2. `AbstractViewer` 发 `uiInitialized`，`setupYuvUi()` 建"Info"和
    "Histogram"两个概览页，若文件名给出了布局就请求加载；
-3. `MainWindow` 紧接着调 `restoreState()`，恢复格式、帧号、平面，
-   必要时补上宽高，再请求一次加载；
+3. `MainWindow` 紧接着调 `restoreState()`，恢复格式、帧号、平面、
+   样本打包和显示预设，必要时补上宽高，再请求一次加载；
 4. 两次请求由 `requestReload()` 合并（详见 `09`），文件只读一遍；
 5. `reload()` 同步做布局校验和帧数计算，然后把读盘 + 解码 + 直方图
    丢给工作线程；
-6. 完成回调缓存原始字节，显示图像，填充信息页和直方图页。
+6. 完成回调缓存原始字节和**未变换**的解码图，按当前 View 预设做显示
+   变换后上屏，填充信息页和直方图页。直方图和像素探针始终读原始样本。
 
 文件名解析不出尺寸也不是错误——此时显示提示语，等用户在工具栏填完
 宽高后按 Reload。只有当文件名**看着像**带了尺寸却解析不出来（例如
@@ -219,7 +235,11 @@ GRBG 用 `BayerGB`，GBRG 用 `BayerGR`，BGGR 用 `BayerRG`。
 - 取消是协作式的：`readData()` 每读完一块就问一次进度回调要不要继续，
   新的加载会先 `cancelAsyncTasks()` 作废旧的；
 - 切换平面**不重新读盘**，直接对缓存的 `m_rawData` 做提取（`QByteArray`
-  隐式共享，捕获进 lambda 的代价可忽略）。
+  隐式共享，捕获进 lambda 的代价可忽略）；
+- 切换 View 预设**不重新解码**：对缓存的 `m_decodedImage` 做
+  `RawImageDisplay::apply()`。这条路径不能走 `startAsyncTask()`，
+  因为那会抬高 viewer 的任务代数、把正在进行的加载或平面切换作废；
+  显示变换用自己的 `QtConcurrent` 任务和 `m_displayGeneration`。
 
 `cancelAsyncTasks()` 只作废回调、不阻塞等待，所以切换文件时 UI 不卡；
 真正的阻塞等待放在 `~AbstractViewer()`，那时对象即将销毁。
@@ -236,9 +256,11 @@ viewer 实例由 `ViewerFactory` 长期持有并**复用**：换文件走
   在整个进程生命周期里都活着。
 
 会话状态（`saveState()` / `restoreState()`）用 `QDataStream` 依次写入
-viewer 名、宽、高、格式 id、帧号、平面索引、样本位深与对齐。字段是逐版本
-追加的，读取时用 `atEnd()` 判断，旧状态文件仍可读。格式存的是 `id()`
-字符串而非下拉框序号，所以调整格式顺序不会让旧状态错位。
+viewer 名、宽、高、格式 id、帧号、平面索引、样本位深与对齐、显示变换
+（自动电平、灰世界、Gamma）。字段是逐版本追加的，读取时用 `atEnd()`
+判断，旧状态文件仍可读。格式存的是 `id()` 字符串而非下拉框序号，所以
+调整格式顺序不会让旧状态错位。显示预设存的是三个字段而不是下拉框序号，
+同样不怕以后增删预设。
 
 格式和样本打包都遵循同一条规则：**明确的扩展名压过会话状态**。`.p010`
 文件就是 10 位左对齐，不管上次打开的是什么。

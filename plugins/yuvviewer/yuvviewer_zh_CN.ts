@@ -403,6 +403,38 @@ sensor dumps). Reading right-aligned data as 16 bit yields a black frame.</sourc
         <translation>样本：</translation>
     </message>
     <message>
+        <source>View:</source>
+        <translation>显示：</translation>
+    </message>
+    <message>
+        <source>Linear</source>
+        <translation>线性</translation>
+    </message>
+    <message>
+        <source>Gamma 2.2</source>
+        <translation>Gamma 2.2</translation>
+    </message>
+    <message>
+        <source>Auto level</source>
+        <translation>自动电平</translation>
+    </message>
+    <message>
+        <source>Auto + Gamma 2.2</source>
+        <translation>自动电平 + Gamma 2.2</translation>
+    </message>
+    <message>
+        <source>Auto + WB + Gamma 2.2</source>
+        <translation>自动电平 + 白平衡 + Gamma 2.2</translation>
+    </message>
+    <message>
+        <source>Display-only. Does not change the samples the probe and histogram read.
+Linear shows the decoded values as they are. Auto stretches the range.
+WB equalizes the channel means (gray-world).</source>
+        <translation>仅影响显示，不改变探针和直方图读到的样本。
+线性按解码值原样显示。自动电平拉伸动态范围。
+白平衡按灰世界假设拉齐各通道均值。</translation>
+    </message>
+    <message>
         <location filename="yuvcontrols.cpp" line="230"/>
         <source>Width:</source>
         <translation>宽度：</translation>

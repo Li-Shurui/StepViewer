@@ -65,6 +65,7 @@ private slots:
     void setupYuvUi();
     void onFormatSelected();
     void onPlaneSelected();
+    void onDisplayOptionsSelected();
     void zoomIn();
     void zoomOut();
     void resetZoom();
@@ -86,6 +87,8 @@ private:
     void releaseFrame();
 
     void displayImage(const QImage &image);
+    void showDecoded(const QImage &decoded);
+    void applyDisplayAndShow();
     void updateInfoTab(const RawImageLayout &layout, const RawImageDecoder *decoder);
     void reportError(const QString &message);
 
@@ -120,15 +123,22 @@ private:
     // the pixel probe must never interpret the buffer with anything else.
     const RawImageDecoder *m_loadedDecoder = nullptr;
 
-    // Layout taken from the file name; absent when the name says nothing.
-    std::optional<RawImageLayout> m_fileLayout;
+    // Dimensions (and optional row/plane padding) taken from the file name.
+    // stride/scanline are present only when the name wrote them; switching
+    // format then uses the new decoder's tight row instead of the old one.
+    std::optional<RawImageFileName::NamedLayout> m_fileLayout;
     RawImageFileName::Metadata m_fileNameMetadata;
     QString m_metadataError;
 
     qint64 m_frameCount = 1;
     QByteArray m_rawData;
     RawImageLayout m_layout;
+    // Decoded pixels before the display transform. The probe and histogram
+    // never read this; they go back to m_rawData. The screen and the export
+    // go through applyDisplayAndShow() into m_image.
+    QImage m_decodedImage;
     QImage m_image;
+    int m_displayGeneration = 0;
     bool m_reloadPending = false;
 
     qreal m_scaleFactor = 1;
