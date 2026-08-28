@@ -157,7 +157,7 @@ public:
     QLatin1StringView id() const override { return "bayer_rggb16"_L1; }
     QString displayName() const override { return QStringLiteral("Bayer RGGB16"); }
     QString mimeType() const override { return "video/x-raw-bayer-rggb16"_L1; }
-    QStringList fileExtensions() const override { return {"rggb16"_L1, "RGGB16"_L1}; }
+    QStringList fileExtensions() const override { return {"rggb16"_L1, "RGGB16"_L1, "RAW"_L1, "raw"_L1}; }
 
 protected:
     std::array<int, 4> cfaPattern() const override { return {CfaR, CfaGr, CfaGb, CfaB}; }
