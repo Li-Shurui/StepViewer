@@ -404,7 +404,7 @@ sensor dumps). Reading right-aligned data as 16 bit yields a black frame.</sourc
     </message>
     <message>
         <source>Samples:</source>
-        <translation>样本：</translation>
+        <translation>采样：</translation>
     </message>
     <message>
         <source>View:</source>
@@ -502,7 +502,7 @@ Stride 是首平面每行字节数，scanline 是首平面行数。</translation
     <name>YuvViewer</name>
     <message>
         <source>Samples</source>
-        <translation>样本</translation>
+        <translation>采样</translation>
     </message>
     <message>
         <source>%1 bit</source>
