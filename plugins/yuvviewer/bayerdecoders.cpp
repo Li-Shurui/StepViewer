@@ -160,6 +160,19 @@ protected:
     int conversionCode() const override { return cv::COLOR_BayerGR2RGB; }
 };
 
+class BayerBggr16Decoder final : public Bayer16Decoder
+{
+public:
+    QLatin1StringView id() const override { return "bayer_bggr16"_L1; }
+    QString displayName() const override { return QStringLiteral("Bayer BGGR16"); }
+    QString mimeType() const override { return "video/x-raw-bayer-bggr16"_L1; }
+    QStringList fileExtensions() const override { return {"bggr16"_L1, "BGGR16"_L1}; }
+
+protected:
+    std::array<int, 4> cfaPattern() const override { return {CfaB, CfaGb, CfaGr, CfaR}; }
+    int conversionCode() const override { return cv::COLOR_BayerRG2RGB; }
+};
+
 } // namespace
 
 QList<const RawImageDecoder *> RawImageDecoders::createBayerDecoders()
@@ -168,5 +181,6 @@ QList<const RawImageDecoder *> RawImageDecoders::createBayerDecoders()
         new BayerRggb16Decoder,
         new BayerGrbg16Decoder,
         new BayerGbrg16Decoder,
+        new BayerBggr16Decoder,
     };
 }
