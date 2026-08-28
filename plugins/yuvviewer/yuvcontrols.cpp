@@ -12,6 +12,7 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QToolBar>
+#include <QtMath>
 
 #include <climits>
 #include <iterator>
@@ -36,6 +37,24 @@ constexpr SamplePacking samplePackings[] = {
     {12, true}, {12, false},
     {10, true}, {10, false},
     {8, true},  {8, false},
+};
+
+// Display transforms, in combo box order. Presets rather than three
+// independent toggles: the useful combinations are few, and the toolbar
+// already carries plenty. Linear comes first and stays the default, so a
+// frame is shown as it is until the user asks for otherwise.
+struct DisplayPreset
+{
+    bool autoLevel;
+    bool grayWorldBalance;
+    qreal gamma;
+};
+constexpr DisplayPreset displayPresets[] = {
+    {false, false, 1.0},
+    {false, false, 2.2},
+    {true,  false, 1.0},
+    {true,  false, 2.2},
+    {true,  true,  2.2},
 };
 } // namespace
 
@@ -71,6 +90,10 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
     m_sampleComboBox = new QComboBox(toolBar);
     fillSampleFormats();
 
+    m_displayLabel = new QLabel(toolBar);
+    m_displayComboBox = new QComboBox(toolBar);
+    fillDisplayModes();
+
     m_planeLabel = new QLabel(toolBar);
     m_planeComboBox = new QComboBox(toolBar);
 
@@ -89,6 +112,8 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
 
     connect(m_formatComboBox, &QComboBox::activated, this, &YuvControls::formatSelected);
     connect(m_sampleComboBox, &QComboBox::activated, this, &YuvControls::sampleFormatSelected);
+    connect(m_displayComboBox, &QComboBox::activated, this,
+            &YuvControls::displayOptionsSelected);
     connect(m_planeComboBox, &QComboBox::activated, this, &YuvControls::planeSelected);
     connect(m_frameSpinBox, &QSpinBox::valueChanged, this, &YuvControls::frameSelected);
 
@@ -100,6 +125,8 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
     toolBar->addWidget(m_formatComboBox);
     toolBar->addWidget(m_sampleLabel);
     toolBar->addWidget(m_sampleComboBox);
+    toolBar->addWidget(m_displayLabel);
+    toolBar->addWidget(m_displayComboBox);
     toolBar->addWidget(m_planeLabel);
     toolBar->addWidget(m_planeComboBox);
     toolBar->addWidget(m_frameLabel);
@@ -199,6 +226,47 @@ void YuvControls::setSampleFormat(RawSampleFormat format)
         m_sampleComboBox->setCurrentIndex(i);
         return;
     }
+}
+
+RawImageDisplayOptions YuvControls::displayOptions() const
+{
+    const int index = m_displayComboBox->currentIndex();
+    if (index < 0 || index >= int(std::size(displayPresets)))
+        return {};
+    const DisplayPreset &preset = displayPresets[index];
+    return {preset.autoLevel, preset.grayWorldBalance, preset.gamma};
+}
+
+void YuvControls::setDisplayOptions(const RawImageDisplayOptions &options)
+{
+    for (int i = 0; i < int(std::size(displayPresets)); ++i) {
+        const DisplayPreset &preset = displayPresets[i];
+        if (preset.autoLevel == options.autoLevel
+            && preset.grayWorldBalance == options.grayWorldBalance
+            && qAbs(preset.gamma - options.gamma) < 0.05) {
+            const QSignalBlocker blocker(m_displayComboBox);
+            m_displayComboBox->setCurrentIndex(i);
+            return;
+        }
+    }
+}
+
+void YuvControls::fillDisplayModes()
+{
+    const QSignalBlocker blocker(m_displayComboBox);
+    const int previous = qMax(0, m_displayComboBox->currentIndex());
+    m_displayComboBox->clear();
+    // Order must match displayPresets[].
+    m_displayComboBox->addItem(tr("Linear"));
+    m_displayComboBox->addItem(tr("Gamma 2.2"));
+    m_displayComboBox->addItem(tr("Auto level"));
+    m_displayComboBox->addItem(tr("Auto + Gamma 2.2"));
+    m_displayComboBox->addItem(tr("Auto + WB + Gamma 2.2"));
+    m_displayComboBox->setCurrentIndex(previous);
+    m_displayComboBox->setToolTip(
+        tr("Display-only. Does not change the samples the probe and histogram read.\n"
+           "Linear shows the decoded values as they are. Auto stretches the range.\n"
+           "WB equalizes the channel means (gray-world)."));
 }
 
 int YuvControls::plane() const
@@ -317,11 +385,13 @@ void YuvControls::retranslate()
     m_heightLabel->setText(tr("Height:"));
     m_formatLabel->setText(tr("Format:"));
     m_sampleLabel->setText(tr("Samples:"));
+    m_displayLabel->setText(tr("View:"));
     m_frameLabel->setText(tr("Frame:"));
     m_planeLabel->setText(tr("Plane:"));
     m_widthSpinBox->setSuffix(tr(" px"));
     m_heightSpinBox->setSuffix(tr(" px"));
     fillSampleFormats();
+    fillDisplayModes();
     if (m_planeComboBox->count() > compositeIndex)
         m_planeComboBox->setItemText(compositeIndex, tr("Composite"));
     highlightMatchingFormats();

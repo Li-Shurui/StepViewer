@@ -3,6 +3,8 @@
 
 #include "rawimagefilename.h"
 
+#include "rawimagedecoder.h"
+
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QRegularExpression>
@@ -35,6 +37,12 @@ std::expected<int, QString> capturedInteger(const QRegularExpressionMatch &match
                                    .arg(fieldName, match.captured(index)));
     }
     return value;
+}
+
+bool dimensionInRange(int value)
+{
+    return value >= RawImageDecoder::minimumDimension
+        && value <= RawImageDecoder::maximumDimension;
 }
 
 } // namespace
@@ -92,13 +100,33 @@ bool RawImageFileName::isLayoutKey(const QString &key)
         || key.compare(scanlineKey, Qt::CaseInsensitive) == 0;
 }
 
-RawImageFileName::LayoutResult RawImageFileName::layout(const QString &fileName,
-                                                        const RawImageDecoder &decoder)
+RawImageFileName::LayoutResult RawImageFileName::layout(const QString &fileName)
 {
     const QString baseName = QFileInfo(fileName).completeBaseName();
     static const QRegularExpression taggedPattern(
         QStringLiteral(R"((?:^|_)w\[(\d+)\]_h\[(\d+)\](?:_stride\[(\d+)\])?(?:_scanline\[(\d+)\])?)"),
         QRegularExpression::CaseInsensitiveOption);
+
+    const auto finish = [](int width, int height, std::optional<int> stride,
+                           std::optional<int> scanline) -> LayoutResult {
+        if (!dimensionInRange(width)) {
+            return std::unexpected(Tr::tr("Invalid %1 value \"%2\" in the file name.")
+                                       .arg(Tr::tr("width"), QString::number(width)));
+        }
+        if (!dimensionInRange(height)) {
+            return std::unexpected(Tr::tr("Invalid %1 value \"%2\" in the file name.")
+                                       .arg(Tr::tr("height"), QString::number(height)));
+        }
+        if (stride && (*stride <= 0 || *stride > RawImageDecoder::maximumStride)) {
+            return std::unexpected(Tr::tr("Invalid %1 value \"%2\" in the file name.")
+                                       .arg(Tr::tr("stride"), QString::number(*stride)));
+        }
+        if (scanline && (*scanline <= 0 || *scanline > RawImageDecoder::maximumDimension)) {
+            return std::unexpected(Tr::tr("Invalid %1 value \"%2\" in the file name.")
+                                       .arg(Tr::tr("scanline"), QString::number(*scanline)));
+        }
+        return std::optional<NamedLayout>(NamedLayout{width, height, stride, scanline});
+    };
 
     const QRegularExpressionMatch taggedMatch = taggedPattern.match(baseName);
     if (taggedMatch.hasMatch()) {
@@ -109,22 +137,23 @@ RawImageFileName::LayoutResult RawImageFileName::layout(const QString &fileName,
         if (!height)
             return std::unexpected(height.error());
 
-        // Untagged stride/scanline mean a tightly packed frame.
-        const auto stride = taggedMatch.captured(3).isEmpty()
-            ? std::expected<int, QString>(decoder.defaultStride(*width))
-            : capturedInteger(taggedMatch, 3, Tr::tr("stride"));
-        if (!stride)
-            return std::unexpected(stride.error());
-        const auto scanline = taggedMatch.captured(4).isEmpty()
-            ? std::expected<int, QString>(*height)
-            : capturedInteger(taggedMatch, 4, Tr::tr("scanline"));
-        if (!scanline)
-            return std::unexpected(scanline.error());
-
-        const auto validated = decoder.validateLayout({*width, *height, *stride, *scanline});
-        if (!validated)
-            return std::unexpected(validated.error());
-        return std::optional<RawImageLayout>(*validated);
+        // Absent tags are not defaults of the decoder used at open: that
+        // would pin a .raw file's stride to NV12's one-byte rows.
+        std::optional<int> stride;
+        if (!taggedMatch.captured(3).isEmpty()) {
+            const auto parsed = capturedInteger(taggedMatch, 3, Tr::tr("stride"));
+            if (!parsed)
+                return std::unexpected(parsed.error());
+            stride = *parsed;
+        }
+        std::optional<int> scanline;
+        if (!taggedMatch.captured(4).isEmpty()) {
+            const auto parsed = capturedInteger(taggedMatch, 4, Tr::tr("scanline"));
+            if (!parsed)
+                return std::unexpected(parsed.error());
+            scanline = *parsed;
+        }
+        return finish(*width, *height, stride, scanline);
     }
 
     if (baseName.contains("_w["_L1, Qt::CaseInsensitive)
@@ -143,7 +172,7 @@ RawImageFileName::LayoutResult RawImageFileName::layout(const QString &fileName,
         lastMatch = matches.next();
 
     if (!lastMatch.hasMatch())
-        return std::optional<RawImageLayout>();
+        return std::optional<NamedLayout>();
 
     const auto width = capturedInteger(lastMatch, 1, Tr::tr("width"));
     if (!width)
@@ -152,9 +181,5 @@ RawImageFileName::LayoutResult RawImageFileName::layout(const QString &fileName,
     if (!height)
         return std::unexpected(height.error());
 
-    const auto validated = decoder.validateLayout(
-        {*width, *height, decoder.defaultStride(*width), *height});
-    if (!validated)
-        return std::unexpected(validated.error());
-    return std::optional<RawImageLayout>(*validated);
+    return finish(*width, *height, std::nullopt, std::nullopt);
 }
