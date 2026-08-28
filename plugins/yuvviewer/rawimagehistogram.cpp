@@ -60,7 +60,8 @@ QColor planeColor(const QString &planeName)
         return QColor(220, 70, 70);
     if (planeName == "R"_L1)
         return QColor(220, 40, 40);
-    if (planeName == "G"_L1)
+    // Gr / Gb are the two greens of a Bayer cell.
+    if (planeName == "G"_L1 || planeName == "Gr"_L1 || planeName == "Gb"_L1)
         return QColor(40, 170, 40);
     if (planeName == "B"_L1)
         return QColor(60, 60, 230);

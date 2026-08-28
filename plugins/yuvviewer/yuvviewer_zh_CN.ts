@@ -2,6 +2,14 @@
 <!DOCTYPE TS>
 <TS version="2.1" language="zh_CN" sourcelanguage="en">
 <context>
+    <name>Bayer16Decoder</name>
+    <message>
+        <location filename="bayerdecoders.cpp" line="109"/>
+        <source>%1=%2</source>
+        <translation>%1=%2</translation>
+    </message>
+</context>
+<context>
     <name>PackedRgb16Decoder</name>
     <message>
         <location filename="rgbdecoders.cpp" line="437"/>
