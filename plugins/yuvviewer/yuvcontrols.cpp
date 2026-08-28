@@ -6,6 +6,7 @@
 #include "rawimagedecoder.h"
 #include "rawimageframe.h"
 
+#include <QAbstractSpinBox>
 #include <QComboBox>
 #include <QFont>
 #include <QLabel>
@@ -78,6 +79,19 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
     m_heightLabel = new QLabel(toolBar);
     m_heightSpinBox = makeDimensionSpinBox(1080);
 
+    m_strideLabel = new QLabel(toolBar);
+    m_strideSpinBox = new QSpinBox(toolBar);
+    m_strideSpinBox->setRange(1, RawImageDecoder::maximumStride);
+    m_strideSpinBox->setKeyboardTracking(false);
+    m_strideSpinBox->setValue(1920);
+
+    m_scanlineLabel = new QLabel(toolBar);
+    m_scanlineSpinBox = new QSpinBox(toolBar);
+    m_scanlineSpinBox->setRange(RawImageDecoder::minimumDimension,
+                                RawImageDecoder::maximumDimension);
+    m_scanlineSpinBox->setKeyboardTracking(false);
+    m_scanlineSpinBox->setValue(1080);
+
     m_formatLabel = new QLabel(toolBar);
     m_formatComboBox = new QComboBox(toolBar);
     for (const RawImageDecoder *decoder : RawImageDecoders::all()) {
@@ -105,11 +119,19 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
     m_frameCountLabel = new QLabel(toolBar);
 
     // A changed frame size does not reload by itself; it only re-runs the
-    // format hint, and the user confirms with Reload.
-    const auto onDimensionChanged = [this] { highlightMatchingFormats(); };
+    // format hint and refreshes auto stride/scanline. The user confirms
+    // with Reload.
+    const auto onDimensionChanged = [this] {
+        highlightMatchingFormats();
+        applyPadding();
+    };
     connect(m_widthSpinBox, &QSpinBox::valueChanged, this, onDimensionChanged);
     connect(m_heightSpinBox, &QSpinBox::valueChanged, this, onDimensionChanged);
 
+    connect(m_formatComboBox, &QComboBox::currentIndexChanged, this, [this] {
+        updateSampleFormatEnabled();
+        applyPadding();
+    });
     connect(m_formatComboBox, &QComboBox::activated, this, &YuvControls::formatSelected);
     connect(m_sampleComboBox, &QComboBox::activated, this, &YuvControls::sampleFormatSelected);
     connect(m_displayComboBox, &QComboBox::activated, this,
@@ -121,6 +143,10 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
     toolBar->addWidget(m_widthSpinBox);
     toolBar->addWidget(m_heightLabel);
     toolBar->addWidget(m_heightSpinBox);
+    toolBar->addWidget(m_strideLabel);
+    toolBar->addWidget(m_strideSpinBox);
+    toolBar->addWidget(m_scanlineLabel);
+    toolBar->addWidget(m_scanlineSpinBox);
     toolBar->addWidget(m_formatLabel);
     toolBar->addWidget(m_formatComboBox);
     toolBar->addWidget(m_sampleLabel);
@@ -135,6 +161,7 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
 
     rebuildPlanes();
     updateSampleFormatEnabled();
+    applyPadding();
 }
 
 int YuvControls::imageWidth() const
@@ -147,6 +174,106 @@ int YuvControls::imageHeight() const
     return m_heightSpinBox->value();
 }
 
+int YuvControls::stride() const
+{
+    return m_strideSpinBox->value();
+}
+
+int YuvControls::scanline() const
+{
+    return m_scanlineSpinBox->value();
+}
+
+void YuvControls::setStride(int stride)
+{
+    const QSignalBlocker blocker(m_strideSpinBox);
+    m_strideSpinBox->setValue(stride);
+}
+
+void YuvControls::setScanline(int scanline)
+{
+    const QSignalBlocker blocker(m_scanlineSpinBox);
+    m_scanlineSpinBox->setValue(scanline);
+}
+
+void YuvControls::restorePadding(int stride, int scanline)
+{
+    if (m_strideSpinBox->isReadOnly())
+        return;
+    if (namedPaddingApplies())
+        return;
+    if (stride < 1 || stride > RawImageDecoder::maximumStride
+        || scanline < RawImageDecoder::minimumDimension
+        || scanline > RawImageDecoder::maximumDimension) {
+        return;
+    }
+    setStride(stride);
+    setScanline(scanline);
+}
+
+void YuvControls::setNamedLayout(const std::optional<RawImageFileName::NamedLayout> &layout)
+{
+    m_namedLayout = layout;
+    applyPadding();
+}
+
+bool YuvControls::namedPaddingApplies() const
+{
+    return m_namedLayout
+        && imageWidth() == m_namedLayout->width
+        && imageHeight() == m_namedLayout->height
+        && (m_namedLayout->stride.has_value() || m_namedLayout->scanline.has_value());
+}
+
+bool YuvControls::tightPackedFits() const
+{
+    const RawImageDecoder *current = decoder();
+    if (!current || m_fileSize <= 0)
+        return true;
+
+    const int width = imageWidth();
+    const int height = imageHeight();
+    const RawImageLayout tight{width, height, current->defaultStride(width), height};
+    if (!current->validateLayout(tight))
+        return false;
+    const qint64 frameSize = current->expectedByteSize(tight);
+    return frameSize > 0 && m_fileSize >= frameSize && (m_fileSize % frameSize) == 0;
+}
+
+void YuvControls::setPaddingReadOnly(bool readOnly)
+{
+    for (QSpinBox *box : {m_strideSpinBox, m_scanlineSpinBox}) {
+        box->setReadOnly(readOnly);
+        box->setButtonSymbols(readOnly ? QAbstractSpinBox::NoButtons
+                                       : QAbstractSpinBox::UpDownArrows);
+    }
+    const QString autoTip = tr(
+        "Filled from the current format: stride is the tightly packed row in bytes,\n"
+        "scanline is the height. Edit them when the file has row or plane padding.");
+    const QString manualTip = tr(
+        "This file is larger than a tightly packed frame, or the name declares padding.\n"
+        "Stride is the first plane's row size in bytes; scanline is its row count.");
+    m_strideSpinBox->setToolTip(readOnly ? autoTip : manualTip);
+    m_scanlineSpinBox->setToolTip(readOnly ? autoTip : manualTip);
+}
+
+void YuvControls::applyPadding()
+{
+    const int width = imageWidth();
+    const int height = imageHeight();
+    int stride = decoder() ? decoder()->defaultStride(width) : width;
+    int scanline = height;
+    if (m_namedLayout && width == m_namedLayout->width && height == m_namedLayout->height) {
+        if (m_namedLayout->stride)
+            stride = *m_namedLayout->stride;
+        if (m_namedLayout->scanline)
+            scanline = *m_namedLayout->scanline;
+    }
+    setStride(stride);
+    setScanline(scanline);
+    setPaddingReadOnly(!namedPaddingApplies() && tightPackedFits());
+}
+
 void YuvControls::setImageSize(int width, int height)
 {
     const QSignalBlocker widthBlocker(m_widthSpinBox);
@@ -154,6 +281,7 @@ void YuvControls::setImageSize(int width, int height)
     m_widthSpinBox->setValue(width);
     m_heightSpinBox->setValue(height);
     highlightMatchingFormats();
+    applyPadding();
 }
 
 const RawImageDecoder *YuvControls::decoder() const
@@ -171,6 +299,7 @@ void YuvControls::setDecoder(const RawImageDecoder *decoder)
     const QSignalBlocker blocker(m_formatComboBox);
     m_formatComboBox->setCurrentIndex(index);
     updateSampleFormatEnabled();
+    applyPadding();
 }
 
 // Depths above the container are meaningless, and at 16 bits the two
@@ -339,6 +468,7 @@ void YuvControls::setFileSize(qint64 fileSize)
         return;
     m_fileSize = fileSize;
     highlightMatchingFormats();
+    applyPadding();
 }
 
 // Highlights the formats whose tight frame size divides the file size
@@ -383,6 +513,8 @@ void YuvControls::retranslate()
 {
     m_widthLabel->setText(tr("Width:"));
     m_heightLabel->setText(tr("Height:"));
+    m_strideLabel->setText(tr("Stride:"));
+    m_scanlineLabel->setText(tr("Scanline:"));
     m_formatLabel->setText(tr("Format:"));
     m_sampleLabel->setText(tr("Samples:"));
     m_displayLabel->setText(tr("View:"));
@@ -390,8 +522,11 @@ void YuvControls::retranslate()
     m_planeLabel->setText(tr("Plane:"));
     m_widthSpinBox->setSuffix(tr(" px"));
     m_heightSpinBox->setSuffix(tr(" px"));
+    m_strideSpinBox->setSuffix(tr(" bytes"));
+    m_scanlineSpinBox->setSuffix(tr(" lines"));
     fillSampleFormats();
     fillDisplayModes();
+    setPaddingReadOnly(m_strideSpinBox->isReadOnly());
     if (m_planeComboBox->count() > compositeIndex)
         m_planeComboBox->setItemText(compositeIndex, tr("Composite"));
     highlightMatchingFormats();
@@ -401,5 +536,7 @@ void YuvControls::commitPendingEdits()
 {
     m_widthSpinBox->interpretText();
     m_heightSpinBox->interpretText();
+    m_strideSpinBox->interpretText();
+    m_scanlineSpinBox->interpretText();
     m_frameSpinBox->interpretText();
 }

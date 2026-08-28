@@ -160,9 +160,13 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
     const auto parsedLayout = RawImageFileName::layout(fileName);
     if (!parsedLayout) {
         m_metadataError = parsedLayout.error();
+        m_controls->setNamedLayout(std::nullopt);
     } else if (parsedLayout->has_value()) {
         m_fileLayout = *parsedLayout;
+        m_controls->setNamedLayout(m_fileLayout);
         m_controls->setImageSize(m_fileLayout->width, m_fileLayout->height);
+    } else {
+        m_controls->setNamedLayout(std::nullopt);
     }
 
     clear();
@@ -260,6 +264,7 @@ QByteArray YuvViewer::saveState() const
     stream << sample.bits << sample.msbAligned;
     const RawImageDisplayOptions display = m_controls->displayOptions();
     stream << display.autoLevel << display.grayWorldBalance << display.gamma;
+    stream << m_controls->stride() << m_controls->scanline();
     return state;
 }
 
@@ -339,6 +344,17 @@ bool YuvViewer::restoreState(QByteArray &state)
     if (!m_fileLayout && m_metadataError.isEmpty())
         m_controls->setImageSize(width, height);
 
+    // States saved before the stride/scanline boxes end after the display
+    // transform. A name that declares padding still wins: applyPadding()
+    // already filled those values from the name.
+    if (!stream.atEnd()) {
+        int stride = 0;
+        int scanline = 0;
+        stream >> stride >> scanline;
+        if (stream.status() == QDataStream::Ok)
+            m_controls->restorePadding(stride, scanline);
+    }
+
     // setupYuvUi() may already have asked for a load; requestReload()
     // collapses both requests into one read with the restored settings.
     if (m_fileLayout || m_metadataError.isEmpty())
@@ -379,18 +395,8 @@ void YuvViewer::reload()
 
     const int width = m_controls->imageWidth();
     const int height = m_controls->imageHeight();
-    RawImageLayout requestedLayout{width, height, m_decoder->defaultStride(width), height};
+    RawImageLayout requestedLayout{width, height, m_controls->stride(), m_controls->scanline()};
     requestedLayout.sample = m_controls->sampleFormat();
-    // Only `_stride[N]` / `_scanline[N]` in the name are padding. A WxH
-    // name does not remember the previous format's tight row: that is
-    // what made a .raw file keep NV12's width-as-stride after the user
-    // switched to Bayer.
-    if (m_fileLayout && width == m_fileLayout->width && height == m_fileLayout->height) {
-        if (m_fileLayout->stride)
-            requestedLayout.stride = *m_fileLayout->stride;
-        if (m_fileLayout->scanline)
-            requestedLayout.scanline = *m_fileLayout->scanline;
-    }
 
     // Layout validation is cheap and stays synchronous; only file reading
     // and pixel conversion move to a worker thread.

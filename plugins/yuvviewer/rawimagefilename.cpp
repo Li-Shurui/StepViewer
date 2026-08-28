@@ -9,6 +9,10 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 
+#include <expected>
+#include <optional>
+#include <utility>
+
 using namespace Qt::StringLiterals;
 
 namespace {
@@ -43,6 +47,48 @@ bool dimensionInRange(int value)
 {
     return value >= RawImageDecoder::minimumDimension
         && value <= RawImageDecoder::maximumDimension;
+}
+
+// `_stride[N]` / `_scanline[N]` may appear after either naming convention.
+// An opener without a number is an error: silently ignoring it would load
+// a padded dump as tightly packed.
+std::expected<std::pair<std::optional<int>, std::optional<int>>, QString>
+parsePaddingTags(const QString &baseName)
+{
+    const auto parseTag = [&](QLatin1StringView name, int maximum) -> std::expected<std::optional<int>, QString> {
+        const QRegularExpression present(
+            QStringLiteral(R"((?:^|_)%1\[)").arg(QString(name)),
+            QRegularExpression::CaseInsensitiveOption);
+        if (!present.match(baseName).hasMatch())
+            return std::optional<int>();
+
+        const QRegularExpression value(
+            QStringLiteral(R"((?:^|_)%1\[(\d+)\])").arg(QString(name)),
+            QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch match = value.match(baseName);
+        if (!match.hasMatch()) {
+            return std::unexpected(
+                Tr::tr("The file name contains a %1 tag that cannot be parsed. "
+                       "Expected \"_%1[number]\".")
+                    .arg(QString(name)));
+        }
+        const auto parsed = capturedInteger(match, 1, QString(name));
+        if (!parsed)
+            return std::unexpected(parsed.error());
+        if (*parsed <= 0 || *parsed > maximum) {
+            return std::unexpected(Tr::tr("Invalid %1 value \"%2\" in the file name.")
+                                       .arg(QString(name), QString::number(*parsed)));
+        }
+        return std::optional<int>(*parsed);
+    };
+
+    const auto stride = parseTag("stride"_L1, RawImageDecoder::maximumStride);
+    if (!stride)
+        return std::unexpected(stride.error());
+    const auto scanline = parseTag("scanline"_L1, RawImageDecoder::maximumDimension);
+    if (!scanline)
+        return std::unexpected(scanline.error());
+    return std::pair<std::optional<int>, std::optional<int>>{*stride, *scanline};
 }
 
 } // namespace
@@ -104,7 +150,7 @@ RawImageFileName::LayoutResult RawImageFileName::layout(const QString &fileName)
 {
     const QString baseName = QFileInfo(fileName).completeBaseName();
     static const QRegularExpression taggedPattern(
-        QStringLiteral(R"((?:^|_)w\[(\d+)\]_h\[(\d+)\](?:_stride\[(\d+)\])?(?:_scanline\[(\d+)\])?)"),
+        QStringLiteral(R"((?:^|_)w\[(\d+)\]_h\[(\d+)\])"),
         QRegularExpression::CaseInsensitiveOption);
 
     const auto finish = [](int width, int height, std::optional<int> stride,
@@ -137,23 +183,10 @@ RawImageFileName::LayoutResult RawImageFileName::layout(const QString &fileName)
         if (!height)
             return std::unexpected(height.error());
 
-        // Absent tags are not defaults of the decoder used at open: that
-        // would pin a .raw file's stride to NV12's one-byte rows.
-        std::optional<int> stride;
-        if (!taggedMatch.captured(3).isEmpty()) {
-            const auto parsed = capturedInteger(taggedMatch, 3, Tr::tr("stride"));
-            if (!parsed)
-                return std::unexpected(parsed.error());
-            stride = *parsed;
-        }
-        std::optional<int> scanline;
-        if (!taggedMatch.captured(4).isEmpty()) {
-            const auto parsed = capturedInteger(taggedMatch, 4, Tr::tr("scanline"));
-            if (!parsed)
-                return std::unexpected(parsed.error());
-            scanline = *parsed;
-        }
-        return finish(*width, *height, stride, scanline);
+        const auto padding = parsePaddingTags(baseName);
+        if (!padding)
+            return std::unexpected(padding.error());
+        return finish(*width, *height, padding->first, padding->second);
     }
 
     if (baseName.contains("_w["_L1, Qt::CaseInsensitive)
@@ -171,8 +204,12 @@ RawImageFileName::LayoutResult RawImageFileName::layout(const QString &fileName)
     while (matches.hasNext())
         lastMatch = matches.next();
 
-    if (!lastMatch.hasMatch())
+    if (!lastMatch.hasMatch()) {
+        const auto padding = parsePaddingTags(baseName);
+        if (!padding)
+            return std::unexpected(padding.error());
         return std::optional<NamedLayout>();
+    }
 
     const auto width = capturedInteger(lastMatch, 1, Tr::tr("width"));
     if (!width)
@@ -181,5 +218,8 @@ RawImageFileName::LayoutResult RawImageFileName::layout(const QString &fileName)
     if (!height)
         return std::unexpected(height.error());
 
-    return finish(*width, *height, std::nullopt, std::nullopt);
+    const auto padding = parsePaddingTags(baseName);
+    if (!padding)
+        return std::unexpected(padding.error());
+    return finish(*width, *height, padding->first, padding->second);
 }

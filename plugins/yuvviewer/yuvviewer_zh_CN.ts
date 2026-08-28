@@ -252,6 +252,10 @@
         <translation>文件名中的 %1 值 &quot;%2&quot; 无效。</translation>
     </message>
     <message>
+        <source>The file name contains a %1 tag that cannot be parsed. Expected &quot;_%1[number]&quot;.</source>
+        <translation>文件名中的 %1 标签无法解析。预期为 &quot;_%1[数字]&quot;。</translation>
+    </message>
+    <message>
         <location filename="rawimagefilename.cpp" line="81"/>
         <source>Pipeline</source>
         <translation>处理管线</translation>
@@ -443,6 +447,34 @@ WB equalizes the channel means (gray-world).</source>
         <location filename="yuvcontrols.cpp" line="231"/>
         <source>Height:</source>
         <translation>高度：</translation>
+    </message>
+    <message>
+        <source>Stride:</source>
+        <translation>Stride:</translation>
+    </message>
+    <message>
+        <source>Scanline:</source>
+        <translation>Scanline:</translation>
+    </message>
+    <message>
+        <source> bytes</source>
+        <translation> 字节</translation>
+    </message>
+    <message>
+        <source> lines</source>
+        <translation> 行</translation>
+    </message>
+    <message>
+        <source>Filled from the current format: stride is the tightly packed row in bytes,
+scanline is the height. Edit them when the file has row or plane padding.</source>
+        <translation>按当前格式自动填写：stride 是紧凑行的字节数，scanline 等于高度。
+文件有行填充或面填充时再改这两个值。</translation>
+    </message>
+    <message>
+        <source>This file is larger than a tightly packed frame, or the name declares padding.
+Stride is the first plane's row size in bytes; scanline is its row count.</source>
+        <translation>文件比紧凑帧大，或文件名声明了 padding。
+Stride 是首平面每行字节数，scanline 是首平面行数。</translation>
     </message>
     <message>
         <location filename="yuvcontrols.cpp" line="232"/>

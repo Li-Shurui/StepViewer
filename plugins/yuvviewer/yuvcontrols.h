@@ -6,9 +6,12 @@
 
 #include "rawimagedecoder.h"
 #include "rawimagedisplay.h"
+#include "rawimagefilename.h"
 
 #include <QObject>
 #include <QString>
+
+#include <optional>
 
 class QComboBox;
 class QLabel;
@@ -16,8 +19,8 @@ class QSpinBox;
 class QToolBar;
 
 // The toolbar controls that describe how to interpret a raw file: frame
-// size, pixel format, sample packing, display transform, component plane
-// and frame number.
+// size, row/plane padding, pixel format, sample packing, display transform,
+// component plane and frame number.
 //
 // The instance is parented to the toolbar it populates, so it dies
 // together with the widgets it refers to. Hold it in a QPointer and the
@@ -32,8 +35,21 @@ public:
 
     int imageWidth() const;
     int imageHeight() const;
+    int stride() const;    // first-plane row size in bytes
+    int scanline() const;  // first-plane row count
     // Does not emit sizeChanged(); the caller already knows the size.
     void setImageSize(int width, int height);
+    void setStride(int stride);
+    void setScanline(int scanline);
+    // Applies a session-saved padding only when the boxes are editable.
+    // Tight files stay on the format's own row; a named `_stride[N]` has
+    // already been filled by applyPadding().
+    void restorePadding(int stride, int scanline);
+
+    // Padding the file name declared. Applied while the toolbar width and
+    // height still match that name; a WxH-only name leaves these empty so
+    // each format can fill its own tight row.
+    void setNamedLayout(const std::optional<RawImageFileName::NamedLayout> &layout);
 
     const RawImageDecoder *decoder() const;
     void setDecoder(const RawImageDecoder *decoder);
@@ -72,7 +88,8 @@ public:
     void retranslate();
 
     // Commits in-progress spin box edits so value() matches what is on
-    // screen. Call before reading width, height or frame for a reload.
+    // screen. Call before reading width, height, stride, scanline or frame
+    // for a reload.
     void commitPendingEdits();
 
 signals:
@@ -88,11 +105,17 @@ private:
     void highlightMatchingFormats();
     void fillSampleFormats();
     void fillDisplayModes();
+    void applyPadding();
+    void setPaddingReadOnly(bool readOnly);
+    bool tightPackedFits() const;
+    bool namedPaddingApplies() const;
     // Only the formats with 16-bit containers read the packing.
     void updateSampleFormatEnabled();
 
     QLabel *m_widthLabel = nullptr;
     QLabel *m_heightLabel = nullptr;
+    QLabel *m_strideLabel = nullptr;
+    QLabel *m_scanlineLabel = nullptr;
     QLabel *m_formatLabel = nullptr;
     QLabel *m_sampleLabel = nullptr;
     QLabel *m_displayLabel = nullptr;
@@ -105,8 +128,11 @@ private:
     QComboBox *m_planeComboBox = nullptr;
     QSpinBox *m_widthSpinBox = nullptr;
     QSpinBox *m_heightSpinBox = nullptr;
+    QSpinBox *m_strideSpinBox = nullptr;
+    QSpinBox *m_scanlineSpinBox = nullptr;
     QSpinBox *m_frameSpinBox = nullptr;
     qint64 m_fileSize = 0;
+    std::optional<RawImageFileName::NamedLayout> m_namedLayout;
 };
 
 #endif // YUVCONTROLS_H
