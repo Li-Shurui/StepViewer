@@ -4,6 +4,8 @@
 #ifndef YUVCONTROLS_H
 #define YUVCONTROLS_H
 
+#include "rawimagedecoder.h"
+
 #include <QObject>
 #include <QString>
 
@@ -11,10 +13,9 @@ class QComboBox;
 class QLabel;
 class QSpinBox;
 class QToolBar;
-class RawImageDecoder;
 
 // The toolbar controls that describe how to interpret a raw file: frame
-// size, pixel format, component plane and frame number.
+// size, pixel format, sample packing, component plane and frame number.
 //
 // The instance is parented to the toolbar it populates, so it dies
 // together with the widgets it refers to. Hold it in a QPointer and the
@@ -34,6 +35,12 @@ public:
 
     const RawImageDecoder *decoder() const;
     void setDecoder(const RawImageDecoder *decoder);
+
+    // How to read the 16-bit containers of the current format. Like the
+    // frame size this describes the file rather than the format, so it
+    // survives a format change and is only seeded when a file is opened.
+    RawSampleFormat sampleFormat() const;
+    void setSampleFormat(RawSampleFormat format);
 
     // RawImageFrame::compositePlane for the converted view, otherwise a
     // 0-based index into the current decoder's planeNames().
@@ -62,22 +69,28 @@ public:
     void commitPendingEdits();
 
 signals:
-    // A format or plane the user picked, as opposed to one restored or
-    // derived from the file name.
+    // A format, packing or plane the user picked, as opposed to one
+    // restored or derived from the file name.
     void formatSelected();
+    void sampleFormatSelected();
     void planeSelected();
     void frameSelected();
 
 private:
     void highlightMatchingFormats();
+    void fillSampleFormats();
+    // Only the formats with 16-bit containers read the packing.
+    void updateSampleFormatEnabled();
 
     QLabel *m_widthLabel = nullptr;
     QLabel *m_heightLabel = nullptr;
     QLabel *m_formatLabel = nullptr;
+    QLabel *m_sampleLabel = nullptr;
     QLabel *m_frameLabel = nullptr;
     QLabel *m_frameCountLabel = nullptr;
     QLabel *m_planeLabel = nullptr;
     QComboBox *m_formatComboBox = nullptr;
+    QComboBox *m_sampleComboBox = nullptr;
     QComboBox *m_planeComboBox = nullptr;
     QSpinBox *m_widthSpinBox = nullptr;
     QSpinBox *m_heightSpinBox = nullptr;

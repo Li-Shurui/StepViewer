@@ -171,6 +171,10 @@
         <translation>%1 的 scanline 至少为高度。当前高度 %2，scanline %3。</translation>
     </message>
     <message>
+        <source>%1 sample depth must be between 8 and 16 bits. Received %2.</source>
+        <translation>%1 的样本位深必须介于 8 和 16 位之间。当前为 %2。</translation>
+    </message>
+    <message>
         <location filename="rawimagedecoder_p.h" line="108"/>
         <source>%1 stride must be at least the width. Received width %2, stride %3.</source>
         <translation>%1 的 stride 至少为宽度。当前宽度 %2，stride %3。</translation>
@@ -374,6 +378,31 @@
         <translation>匹配文件大小：每帧 %1 字节，共 %2 帧。</translation>
     </message>
     <message>
+        <source>%1 bit</source>
+        <translation>%1 位</translation>
+    </message>
+    <message>
+        <source>%1 bit MSB</source>
+        <translation>%1 位 左对齐</translation>
+    </message>
+    <message>
+        <source>%1 bit LSB</source>
+        <translation>%1 位 右对齐</translation>
+    </message>
+    <message>
+        <source>Where the significant bits sit inside each 16-bit sample. MSB means the
+value is left-aligned and the low bits are padding (P010 and most ISP
+output); LSB means it is right-aligned and the high bits are zero (most
+sensor dumps). Reading right-aligned data as 16 bit yields a black frame.</source>
+        <translation>有效位在每个 16 位样本中的位置。左对齐表示数值靠高位、低位是填充
+（P010 以及大多数 ISP 输出）；右对齐表示数值靠低位、高位为零（大多数
+传感器 dump）。把右对齐的数据按 16 位读会得到一张纯黑的图。</translation>
+    </message>
+    <message>
+        <source>Samples:</source>
+        <translation>样本：</translation>
+    </message>
+    <message>
         <location filename="yuvcontrols.cpp" line="230"/>
         <source>Width:</source>
         <translation>宽度：</translation>
@@ -407,6 +436,22 @@
 </context>
 <context>
     <name>YuvViewer</name>
+    <message>
+        <source>Samples</source>
+        <translation>样本</translation>
+    </message>
+    <message>
+        <source>%1 bit</source>
+        <translation>%1 位</translation>
+    </message>
+    <message>
+        <source>%1 bit, left-aligned in 16</source>
+        <translation>%1 位，在 16 位中左对齐</translation>
+    </message>
+    <message>
+        <source>%1 bit, right-aligned in 16</source>
+        <translation>%1 位，在 16 位中右对齐</translation>
+    </message>
     <message>
         <source>Invalid %1 value &quot;%2&quot; in the file name.</source>
         <translation type="vanished">文件名中的 %1 值 &quot;%2&quot; 无效。</translation>

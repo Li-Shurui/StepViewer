@@ -143,6 +143,10 @@ void YuvViewer::init(QFile *file, QWidget *parent, QMainWindow *mainWindow)
         m_decoder = RawImageDecoders::defaultDecoder();
     m_controls->setDecoder(m_decoder);
     m_controls->rebuildPlanes();
+    // Seeded like the frame size is: from what the file claims to be, and
+    // afterwards left alone, because the packing describes the data rather
+    // than the format the user is trying out.
+    m_controls->setSampleFormat(m_decoder->defaultSampleFormat().value_or(RawSampleFormat{}));
     m_controls->setFileSize(QFileInfo(fileName).size());
 
     m_fileLayout.reset();
@@ -166,6 +170,7 @@ void YuvViewer::setupToolBar()
     QToolBar *toolBar = addToolBar();
     m_controls = new YuvControls(toolBar);
     connect(m_controls, &YuvControls::formatSelected, this, &YuvViewer::onFormatSelected);
+    connect(m_controls, &YuvControls::sampleFormatSelected, this, &YuvViewer::requestReload);
     connect(m_controls, &YuvControls::planeSelected, this, &YuvViewer::onPlaneSelected);
     connect(m_controls, &YuvControls::frameSelected, this, &YuvViewer::requestReload);
 
@@ -245,6 +250,8 @@ QByteArray YuvViewer::saveState() const
     stream << (m_decoder ? QString(m_decoder->id()) : QString());
     stream << m_controls->frame();
     stream << m_controls->plane() + 1;
+    const RawSampleFormat sample = m_controls->sampleFormat();
+    stream << sample.bits << sample.msbAligned;
     return state;
 }
 
@@ -298,6 +305,19 @@ bool YuvViewer::restoreState(QByteArray &state)
         stream >> planeIndex;
     m_controls->setPlane(planeIndex - 1);
 
+    // States saved before the sample packing was configurable end after
+    // the plane index. As with the format, an extension that names the
+    // packing outright wins: a .p010 file is 10-bit MSB whatever the file
+    // opened last time happened to be. init() has already applied that.
+    if (!stream.atEnd()) {
+        RawSampleFormat sample;
+        stream >> sample.bits >> sample.msbAligned;
+        if (!extensionDecoder && stream.status() == QDataStream::Ok
+            && sample.bits >= 8 && sample.bits <= 16) {
+            m_controls->setSampleFormat(sample);
+        }
+    }
+
     // The file name wins over the saved size; without one, the size from
     // the previous session is the best guess available.
     if (!m_fileLayout && m_metadataError.isEmpty())
@@ -344,6 +364,7 @@ void YuvViewer::reload()
     const int width = m_controls->imageWidth();
     const int height = m_controls->imageHeight();
     RawImageLayout requestedLayout{width, height, m_decoder->defaultStride(width), height};
+    requestedLayout.sample = m_controls->sampleFormat();
     // Padding from the file name only applies while the user keeps the
     // frame size the name declared.
     if (m_fileLayout && width == m_fileLayout->width && height == m_fileLayout->height) {
@@ -586,6 +607,13 @@ void YuvViewer::updateInfoTab(const RawImageLayout &layout, const RawImageDecode
             addRow(RawImageFileName::displayName(key), value);
     }
     addRow(tr("Format"), decoder->displayName());
+    if (decoder->defaultSampleFormat()) {
+        addRow(tr("Samples"), layout.sample.bits == 16
+                   ? tr("%1 bit").arg(layout.sample.bits)
+                   : (layout.sample.msbAligned
+                          ? tr("%1 bit, left-aligned in 16").arg(layout.sample.bits)
+                          : tr("%1 bit, right-aligned in 16").arg(layout.sample.bits)));
+    }
     addRow(tr("Width"), tr("%1 px").arg(layout.width));
     addRow(tr("Height"), tr("%1 px").arg(layout.height));
     addRow(tr("Stride"), tr("%1 bytes").arg(layout.stride));

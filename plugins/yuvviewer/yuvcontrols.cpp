@@ -14,11 +14,29 @@
 #include <QToolBar>
 
 #include <climits>
+#include <iterator>
 
 namespace {
 // Index 0 of the plane combo box is the composite view, so the planes of
 // the decoder start at 1.
 constexpr int compositeIndex = 0;
+
+// The packings offered for 16-bit containers, in combo box order. At 16
+// bits the two alignments are the same thing, so it appears once. Depths
+// run downwards because the question a user has is "how deep is my data",
+// and 16 is the answer that needs no thought.
+struct SamplePacking
+{
+    int bits;
+    bool msbAligned;
+};
+constexpr SamplePacking samplePackings[] = {
+    {16, true},
+    {14, true}, {14, false},
+    {12, true}, {12, false},
+    {10, true}, {10, false},
+    {8, true},  {8, false},
+};
 } // namespace
 
 YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
@@ -49,6 +67,10 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
         m_formatComboBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     }
 
+    m_sampleLabel = new QLabel(toolBar);
+    m_sampleComboBox = new QComboBox(toolBar);
+    fillSampleFormats();
+
     m_planeLabel = new QLabel(toolBar);
     m_planeComboBox = new QComboBox(toolBar);
 
@@ -66,6 +88,7 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
     connect(m_heightSpinBox, &QSpinBox::valueChanged, this, onDimensionChanged);
 
     connect(m_formatComboBox, &QComboBox::activated, this, &YuvControls::formatSelected);
+    connect(m_sampleComboBox, &QComboBox::activated, this, &YuvControls::sampleFormatSelected);
     connect(m_planeComboBox, &QComboBox::activated, this, &YuvControls::planeSelected);
     connect(m_frameSpinBox, &QSpinBox::valueChanged, this, &YuvControls::frameSelected);
 
@@ -75,6 +98,8 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
     toolBar->addWidget(m_heightSpinBox);
     toolBar->addWidget(m_formatLabel);
     toolBar->addWidget(m_formatComboBox);
+    toolBar->addWidget(m_sampleLabel);
+    toolBar->addWidget(m_sampleComboBox);
     toolBar->addWidget(m_planeLabel);
     toolBar->addWidget(m_planeComboBox);
     toolBar->addWidget(m_frameLabel);
@@ -82,6 +107,7 @@ YuvControls::YuvControls(QToolBar *toolBar) : QObject(toolBar)
     toolBar->addWidget(m_frameCountLabel);
 
     rebuildPlanes();
+    updateSampleFormatEnabled();
 }
 
 int YuvControls::imageWidth() const
@@ -117,6 +143,62 @@ void YuvControls::setDecoder(const RawImageDecoder *decoder)
         return;
     const QSignalBlocker blocker(m_formatComboBox);
     m_formatComboBox->setCurrentIndex(index);
+    updateSampleFormatEnabled();
+}
+
+// Depths above the container are meaningless, and at 16 bits the two
+// alignments coincide, so the list stays short enough to scan.
+void YuvControls::fillSampleFormats()
+{
+    const QSignalBlocker blocker(m_sampleComboBox);
+    const int previous = qMax(0, m_sampleComboBox->currentIndex());
+    m_sampleComboBox->clear();
+    for (const SamplePacking &packing : samplePackings) {
+        if (packing.bits == 16) {
+            m_sampleComboBox->addItem(tr("%1 bit").arg(packing.bits));
+            continue;
+        }
+        m_sampleComboBox->addItem(packing.msbAligned
+                                      ? tr("%1 bit MSB").arg(packing.bits)
+                                      : tr("%1 bit LSB").arg(packing.bits));
+    }
+    m_sampleComboBox->setCurrentIndex(previous);
+    m_sampleComboBox->setToolTip(
+        tr("Where the significant bits sit inside each 16-bit sample. MSB means the\n"
+           "value is left-aligned and the low bits are padding (P010 and most ISP\n"
+           "output); LSB means it is right-aligned and the high bits are zero (most\n"
+           "sensor dumps). Reading right-aligned data as 16 bit yields a black frame."));
+}
+
+void YuvControls::updateSampleFormatEnabled()
+{
+    const RawImageDecoder *current = decoder();
+    const bool applies = current && current->defaultSampleFormat().has_value();
+    m_sampleLabel->setEnabled(applies);
+    m_sampleComboBox->setEnabled(applies);
+}
+
+RawSampleFormat YuvControls::sampleFormat() const
+{
+    const int index = m_sampleComboBox->currentIndex();
+    if (index < 0 || index >= int(std::size(samplePackings)))
+        return {};
+    return RawSampleFormat{samplePackings[index].bits, samplePackings[index].msbAligned};
+}
+
+void YuvControls::setSampleFormat(RawSampleFormat format)
+{
+    for (int i = 0; i < int(std::size(samplePackings)); ++i) {
+        // At 16 bits the alignment carries no information, so match on the
+        // depth alone and land on the single combined entry.
+        const bool matches = samplePackings[i].bits == format.bits
+            && (format.bits == 16 || samplePackings[i].msbAligned == format.msbAligned);
+        if (!matches)
+            continue;
+        const QSignalBlocker blocker(m_sampleComboBox);
+        m_sampleComboBox->setCurrentIndex(i);
+        return;
+    }
 }
 
 int YuvControls::plane() const
@@ -144,6 +226,7 @@ QString YuvControls::selectedPlaneName() const
 
 void YuvControls::rebuildPlanes()
 {
+    updateSampleFormatEnabled();
     const QSignalBlocker blocker(m_planeComboBox);
     m_planeComboBox->clear();
     m_planeComboBox->addItem(tr("Composite"));
@@ -233,10 +316,12 @@ void YuvControls::retranslate()
     m_widthLabel->setText(tr("Width:"));
     m_heightLabel->setText(tr("Height:"));
     m_formatLabel->setText(tr("Format:"));
+    m_sampleLabel->setText(tr("Samples:"));
     m_frameLabel->setText(tr("Frame:"));
     m_planeLabel->setText(tr("Plane:"));
     m_widthSpinBox->setSuffix(tr(" px"));
     m_heightSpinBox->setSuffix(tr(" px"));
+    fillSampleFormats();
     if (m_planeComboBox->count() > compositeIndex)
         m_planeComboBox->setItemText(compositeIndex, tr("Composite"));
     highlightMatchingFormats();

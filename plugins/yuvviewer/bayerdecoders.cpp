@@ -52,13 +52,42 @@ public:
 
     int defaultStride(int width) const override { return width * 2; }
 
+    // Sensor dumps are usually right-aligned, but the container is what
+    // the format name describes, so the conventional reading stays the
+    // whole 16 bits and the user narrows it in the toolbar.
+    std::optional<RawSampleFormat> defaultSampleFormat() const override
+    {
+        return RawSampleFormat{};
+    }
+
     ImageResult convertToImage(const QByteArray &data,
                                const RawImageLayout &layout) const override
     {
         return runConversion(*this, [&]() -> ImageResult {
             auto *pixels = reinterpret_cast<uchar *>(const_cast<char *>(data.constData()));
-            cv::Mat mosaic(layout.height, layout.width, CV_16UC1, pixels,
-                           static_cast<size_t>(layout.stride));
+
+            // Right-aligned samples have to be scaled up before
+            // demosaicing. MSB-aligned ones already span the range and are
+            // demosaiced in place, padding and all.
+            QByteArray normalized;
+            cv::Mat mosaic;
+            if (sampleNeedsNormalizing(layout.sample)) {
+                normalized.resize(qsizetype(layout.width) * layout.height * 2);
+                auto *destination = reinterpret_cast<quint16 *>(normalized.data());
+                for (int row = 0; row < layout.height; ++row) {
+                    const uchar *source = pixels + qint64(row) * layout.stride;
+                    quint16 *destinationRow = destination + qint64(row) * layout.width;
+                    for (int col = 0; col < layout.width; ++col) {
+                        destinationRow[col] = fullRangeSample(readLe16(source + 2 * col),
+                                                              layout.sample);
+                    }
+                }
+                mosaic = cv::Mat(layout.height, layout.width, CV_16UC1, destination,
+                                 static_cast<size_t>(layout.width) * 2);
+            } else {
+                mosaic = cv::Mat(layout.height, layout.width, CV_16UC1, pixels,
+                                 static_cast<size_t>(layout.stride));
+            }
 
             // Demosaicing keeps the 16-bit depth, so the whole sample
             // range reaches the display instead of being truncated to the
@@ -95,7 +124,7 @@ public:
         const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
         return strided16Plane(pixels + qint64(rowOffset) * layout.stride,
                               layout.width / 2, layout.height / 2,
-                              qint64(layout.stride) * 2, 2, columnOffset);
+                              qint64(layout.stride) * 2, 2, columnOffset, layout.sample);
     }
 
     // A mosaic pixel carries one color and nothing else, so the probe
@@ -104,7 +133,8 @@ public:
                           int x, int y) const override
     {
         const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
-        const int sample = readLe16(pixels + qint64(y) * layout.stride + 2 * x);
+        const int sample = rawSampleValue(readLe16(pixels + qint64(y) * layout.stride + 2 * x),
+                                          layout.sample);
         const int color = cfaPattern()[(y % 2) * 2 + (x % 2)];
         return tr("%1=%2").arg(planeNames().at(color)).arg(sample);
     }
