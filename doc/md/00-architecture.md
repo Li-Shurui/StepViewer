@@ -130,7 +130,7 @@ QString describePixel(...) const;                  // 像素探针
 
 ### 格式族
 
-38 个格式按族组织，族基类装布局规则和转换，具体格式只填分量顺序和命名：
+39 个格式按族组织，族基类装布局规则和转换，具体格式只填分量顺序和命名：
 
 | 族基类 | 文件 | 具体格式 |
 | --- | --- | --- |
@@ -147,7 +147,7 @@ QString describePixel(...) const;                  // 像素探针
 | `PackedRgbDecoder` | `rgbdecoders.cpp` | RGB888, BGR888, RGBA8888, RGBX8888, BGRA8888, BGRX8888, RGB565, BGR565, RGB555, BGR555 |
 | `PackedRgb16Decoder` | `rgbdecoders.cpp` | RGB48, RGBA64 |
 | （直接继承） | `rgbdecoders.cpp` | Y8 |
-| `Bayer16Decoder` | `bayerdecoders.cpp` | Bayer RGGB16, Bayer GRBG16, Bayer GBRG16 |
+| `Bayer16Decoder` | `bayerdecoders.cpp` | Bayer RGGB16, Bayer GRBG16, Bayer GBRG16, Bayer BGGR16 |
 
 Bayer 是唯一**每个像素只带一个分量**的族：转换就是去马赛克，不做黑电平、
 白平衡、颜色矩阵和 Gamma，所以出来的图比相机自身 ISP 的结果更平、更偏
