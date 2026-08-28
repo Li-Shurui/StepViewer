@@ -141,7 +141,7 @@ const QList<const RawImageDecoder *> &all()
     // Never deleted; the registry lives as long as the plugin library.
     // The order is the order of the format combo box.
     static const QList<const RawImageDecoder *> decoders =
-        createYuvDecoders() + createRgbDecoders();
+        createYuvDecoders() + createRgbDecoders() + createBayerDecoders();
     return decoders;
 }
 

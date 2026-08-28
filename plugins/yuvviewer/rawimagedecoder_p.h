@@ -10,11 +10,11 @@
 
 #include <cstring>
 
-// Primitives shared by the concrete decoders in yuvdecoders.cpp and
-// rgbdecoders.cpp. A new format is normally a matter of picking the
-// matching layout validator, one of the plane extractors and one of the
-// pixel describers, so this is the first place to look before writing
-// anything by hand.
+// Primitives shared by the concrete decoders in yuvdecoders.cpp,
+// rgbdecoders.cpp and bayerdecoders.cpp. A new format is normally a
+// matter of picking the matching layout validator, one of the plane
+// extractors and one of the pixel describers, so this is the first place
+// to look before writing anything by hand.
 //
 // Not part of the public decoder API; only the decoder implementations
 // and the registry include this header.
@@ -111,6 +111,44 @@ inline RawImageDecoder::LayoutResult validateYuv444Layout(const RawImageDecoder 
                                        .arg(layout.width)
                                        .arg(layout.stride));
         }
+        return std::unexpected(RawImageDecoder::tr("%1 stride must be at least the width times %2 "
+                                                   "bytes. Received width %3, stride %4.")
+                                   .arg(decoder.displayName())
+                                   .arg(bytesPerPixel)
+                                   .arg(layout.width)
+                                   .arg(layout.stride));
+    }
+    if (layout.scanline < layout.height) {
+        return std::unexpected(RawImageDecoder::tr("%1 scanline must be at least the height. "
+                                                   "Received height %2, scanline %3.")
+                                   .arg(decoder.displayName())
+                                   .arg(layout.height)
+                                   .arg(layout.scanline));
+    }
+
+    return layout;
+}
+
+// Shared layout validation for Bayer mosaic formats: the color filter
+// array repeats every two pixels in both directions, so a frame has to
+// cover whole 2x2 cells. bytesPerPixel scales the stride requirement for
+// the wider sample containers.
+inline RawImageDecoder::LayoutResult validateBayerLayout(const RawImageDecoder &decoder,
+                                                         const RawImageLayout &layout,
+                                                         int bytesPerPixel)
+{
+    const RawImageDecoder::LayoutResult baseResult = decoder.RawImageDecoder::validateLayout(layout);
+    if (!baseResult)
+        return baseResult;
+
+    if ((layout.width % 2) != 0 || (layout.height % 2) != 0) {
+        return std::unexpected(RawImageDecoder::tr("%1 width and height must both be even. "
+                                                   "Received %2x%3.")
+                                   .arg(decoder.displayName())
+                                   .arg(layout.width)
+                                   .arg(layout.height));
+    }
+    if (layout.stride < layout.width * bytesPerPixel) {
         return std::unexpected(RawImageDecoder::tr("%1 stride must be at least the width times %2 "
                                                    "bytes. Received width %3, stride %4.")
                                    .arg(decoder.displayName())
@@ -291,6 +329,7 @@ namespace RawImageDecoders {
 // adding a class to the matching file and a line to its factory.
 QList<const RawImageDecoder *> createYuvDecoders();
 QList<const RawImageDecoder *> createRgbDecoders();
+QList<const RawImageDecoder *> createBayerDecoders();
 
 } // namespace RawImageDecoders
 

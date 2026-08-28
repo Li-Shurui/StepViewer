@@ -68,6 +68,7 @@ qt_add_plugin(yuvviewer
     rawimagedecoder.cpp rawimagedecoder.h rawimagedecoder_p.h
     yuvdecoders.cpp
     rgbdecoders.cpp
+    bayerdecoders.cpp
     rawimagefilename.cpp rawimagefilename.h
     rawimageframe.cpp rawimageframe.h
     rawimagehistogram.cpp rawimagehistogram.h

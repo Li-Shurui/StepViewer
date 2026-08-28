@@ -25,6 +25,7 @@ YUV Viewer 是一个 Qt 插件，实现 `ViewerInterface`（`app/viewerinterface
 | `rawimagedecoder_p.h` | 各解码器共用的原语：布局校验、平面提取、像素描述 |
 | `yuvdecoders.cpp` | YUV 各族解码器（4:2:0 / 4:2:2 / 4:4:4，8 与 16 bit） |
 | `rgbdecoders.cpp` | 单平面格式：packed RGB、位打包 RGB565 系列、灰度 Y8 |
+| `bayerdecoders.cpp` | Bayer 马赛克（裸传感器）格式，按 CFA 相位分族 |
 | `rawimagefilename.h/.cpp` | 从文件名解析布局与元数据 |
 | `rawimageframe.h/.cpp` | 帧一致性校验 + 渲染（合成图或单平面） |
 | `rawimagehistogram.h/.cpp` | 逐通道直方图统计与绘图 |
@@ -129,7 +130,7 @@ QString describePixel(...) const;                  // 像素探针
 
 ### 格式族
 
-35 个格式按族组织，族基类装布局规则和转换，具体格式只填分量顺序和命名：
+36 个格式按族组织，族基类装布局规则和转换，具体格式只填分量顺序和命名：
 
 | 族基类 | 文件 | 具体格式 |
 | --- | --- | --- |
@@ -146,13 +147,23 @@ QString describePixel(...) const;                  // 像素探针
 | `PackedRgbDecoder` | `rgbdecoders.cpp` | RGB888, BGR888, RGBA8888, RGBX8888, BGRA8888, BGRX8888, RGB565, BGR565, RGB555, BGR555 |
 | `PackedRgb16Decoder` | `rgbdecoders.cpp` | RGB48, RGBA64 |
 | （直接继承） | `rgbdecoders.cpp` | Y8 |
+| `Bayer16Decoder` | `bayerdecoders.cpp` | Bayer RGGB16 |
+
+Bayer 是唯一**每个像素只带一个分量**的族：转换就是去马赛克，不做黑电平、
+白平衡、颜色矩阵和 Gamma，所以出来的图比相机自身 ISP 的结果更平、更偏
+绿。分平面看到的是原始马赛克的四个 CFA 相位（R / Gr / Gb / B，各为
+半宽半高），里面没有任何插值出来的采样。
+
+需要注意 OpenCV 的 Bayer 常量是按**第二行的第二、三列**命名的，不是按左
+上角的 2×2 单元，所以字母和格式名对不上：RGGB 用 `COLOR_BayerBG2RGB`，
+GRBG 用 `BayerGB`，GBRG 用 `BayerGR`，BGGR 用 `BayerRG`。
 
 `rawimagedecoder_p.h` 提供的可复用原语：
 
 - 布局校验：`validateYuv420Layout()`（宽高/stride/scanline 均须偶数）、
   `validateYuv422Layout()`（只约束宽和 stride 偶数）、
   `validateYuv444Layout()`（无子采样，只查行/面填充，可按每像素字节数
-  放大 stride 下限）；
+  放大 stride 下限）、`validateBayerLayout()`（2×2 CFA 要求宽高为偶数）；
 - 转换封装：`rgbaMatToImage()`（cv::Mat → 脱离的 QImage）、
   `runConversion()`（把 OpenCV 异常翻成错误结果）；
 - 平面提取：`grayscalePlane()` / `stridedPlane()` / `rgb16Plane()` /
@@ -162,13 +173,14 @@ QString describePixel(...) const;                  // 像素探针
 
 ### 加一个新格式
 
-1. 在 `yuvdecoders.cpp` 或 `rgbdecoders.cpp` 里挑一个族基类继承，
-   只需重写 `id()` / `displayName()` / `mimeType()` / `fileExtensions()`
-   和描述分量顺序的那一两个钩子；族里没有合适的就直接继承
-   `RawImageDecoder`，用 `rawimagedecoder_p.h` 的原语拼出实现；
-2. 在同文件末尾的 `createYuvDecoders()` / `createRgbDecoders()` 里加一行。
+1. 在 `yuvdecoders.cpp` / `rgbdecoders.cpp` / `bayerdecoders.cpp` 里挑一个
+   族基类继承，只需重写 `id()` / `displayName()` / `mimeType()` /
+   `fileExtensions()` 和描述分量顺序的那一两个钩子；族里没有合适的就直接
+   继承 `RawImageDecoder`，用 `rawimagedecoder_p.h` 的原语拼出实现；
+2. 在同文件末尾的 `createYuvDecoders()` / `createRgbDecoders()` /
+   `createBayerDecoders()` 里加一行。
 
-注册表 `RawImageDecoders::all()` 把两个工厂的结果拼起来，列表顺序即格式
+注册表 `RawImageDecoders::all()` 把三个工厂的结果拼起来，列表顺序即格式
 下拉框的顺序。`YuvViewer` 不含任何格式相关的分支，无需改动。
 
 ## 线程模型
