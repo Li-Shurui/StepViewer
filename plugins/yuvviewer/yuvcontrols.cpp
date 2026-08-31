@@ -79,6 +79,11 @@ YuvControls::YuvControls(QToolBar *layoutBar, QToolBar *viewBar, QAction *reload
         spinBox->setSingleStep(2);
         spinBox->setValue(initialValue);
         spinBox->setKeyboardTracking(false);
+
+        // decrease width of spinbox
+        spinBox->setMaximumWidth(100);
+        // spinBox->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+
         return spinBox;
     };
 
@@ -92,6 +97,7 @@ YuvControls::YuvControls(QToolBar *layoutBar, QToolBar *viewBar, QAction *reload
     m_strideSpinBox->setRange(1, RawImageDecoder::maximumStride);
     m_strideSpinBox->setKeyboardTracking(false);
     m_strideSpinBox->setValue(1920);
+    m_strideSpinBox->setMaximumWidth(100);
 
     m_scanlineLabel = new QLabel(layoutBar);
     m_scanlineSpinBox = new QSpinBox(layoutBar);
@@ -99,6 +105,7 @@ YuvControls::YuvControls(QToolBar *layoutBar, QToolBar *viewBar, QAction *reload
                                 RawImageDecoder::maximumDimension);
     m_scanlineSpinBox->setKeyboardTracking(false);
     m_scanlineSpinBox->setValue(1080);
+    m_scanlineSpinBox->setMaximumWidth(100);
 
     m_formatLabel = new QLabel(layoutBar);
     m_formatComboBox = new QComboBox(layoutBar);
