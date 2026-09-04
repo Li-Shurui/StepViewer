@@ -116,6 +116,7 @@ QTableWidget *AbstractViewer::addInfoTab(const QString &title)
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->verticalHeader()->hide();
     table->horizontalHeader()->setStretchLastSection(true);
+    table->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     tabs->addTab(table, title);
     m_infoTabs.append(table);
     return table;

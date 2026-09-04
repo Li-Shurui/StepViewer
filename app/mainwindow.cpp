@@ -33,6 +33,11 @@ MainWindow::MainWindow(Translator &translator, QWidget *parent)
     : QMainWindow(parent), ui(new Ui::MainWindow), m_translator(translator)
 {
     ui->setupUi(this);
+    // Let the overview pane shrink below a page's size hint (histogram
+    // pixmap, table columns) and grow into the view area.
+    ui->tabWidget->setMinimumWidth(0);
+    ui->scrollArea->setMinimumWidth(0);
+    ui->tabWidget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     connect(ui->actionOpen, &QAction::triggered, this, &MainWindow::onActionOpenTriggered);
     connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::onActionAboutTriggered);
     connect(ui->actionAboutQt, &QAction::triggered, this, &MainWindow::onActionAboutQtTriggered);

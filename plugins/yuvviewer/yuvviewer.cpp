@@ -31,6 +31,7 @@
 #include <QMainWindow>
 #include <QMouseEvent>
 #include <QPixmap>
+#include <QScrollArea>
 #include <QStatusBar>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -216,7 +217,16 @@ void YuvViewer::setupYuvUi()
     auto *histogram = new QLabel;
     histogram->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     m_histogramLabel = histogram;
-    addTabPage(histogram, tr("Histogram"));
+
+    // A QLabel's minimum size follows its pixmap. Put it in a scroll area
+    // so the overview splitter can shrink past the histogram width.
+    auto *histogramPage = new QScrollArea;
+    histogramPage->setFrameShape(QFrame::NoFrame);
+    histogramPage->setWidgetResizable(false);
+    histogramPage->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    histogramPage->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    histogramPage->setWidget(histogram);
+    addTabPage(histogramPage, tr("Histogram"));
 
     if (m_fileLayout) {
         requestReload();
@@ -484,8 +494,10 @@ void YuvViewer::reload()
             m_rawData = std::move(result->data);
             m_layout = loadLayout;
             showDecoded(result->image);
-            if (m_histogramLabel)
+            if (m_histogramLabel) {
                 m_histogramLabel->setPixmap(QPixmap::fromImage(result->histogram));
+                m_histogramLabel->adjustSize();
+            }
             updateInfoTab(loadLayout, decoder);
 
             const QString fileDescription = tr("\"%1\", %2x%3, %4 (stride=%5, scanline=%6)")
@@ -584,8 +596,10 @@ void YuvViewer::clear()
     }
     if (m_infoTable)
         m_infoTable->setRowCount(0);
-    if (m_histogramLabel)
+    if (m_histogramLabel) {
         m_histogramLabel->clear();
+        m_histogramLabel->adjustSize();
+    }
 
     ++m_displayGeneration;
     releaseFrame();
@@ -907,7 +921,10 @@ void YuvViewer::retranslate()
                 tabs->setTabText(index, tr("Info"));
         }
         if (m_histogramLabel) {
-            const int index = tabs->indexOf(m_histogramLabel);
+            QWidget *page = m_histogramLabel;
+            while (page && tabs->indexOf(page) < 0)
+                page = page->parentWidget();
+            const int index = page ? tabs->indexOf(page) : -1;
             if (index >= 0)
                 tabs->setTabText(index, tr("Histogram"));
         }
