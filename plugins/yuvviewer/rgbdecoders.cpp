@@ -526,13 +526,20 @@ protected:
     }
 };
 
+// Also known as RGB161616, spelling out the per-channel widths the way
+// RGB888 and RGB565 do. That is the same single plane of little-endian
+// 16-bit R,G,B samples, so it is an extension alias here rather than a
+// second decoder that would duplicate this one in the format combo box.
 class Rgb48Decoder final : public PackedRgb16Decoder
 {
 public:
     QLatin1StringView id() const override { return "rgb48"_L1; }
     QString displayName() const override { return QStringLiteral("RGB48"); }
     QString mimeType() const override { return "video/x-raw-rgb48"_L1; }
-    QStringList fileExtensions() const override { return {"rgb48"_L1, "RGB48"_L1}; }
+    QStringList fileExtensions() const override
+    {
+        return {"rgb48"_L1, "RGB48"_L1, "rgb161616"_L1, "RGB161616"_L1};
+    }
 
     ImageResult convertToImage(const QByteArray &data,
                                const RawImageLayout &layout) const override
