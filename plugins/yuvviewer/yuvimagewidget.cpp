@@ -6,16 +6,22 @@
 #include <QPaintEvent>
 #include <QPainter>
 #include <QPen>
+#include <QSizePolicy>
 #include <QtMath>
 
 YuvImageWidget::YuvImageWidget(QWidget *parent) : QFrame(parent)
 {
+    // The enclosing QScrollArea has widgetResizable set, so a Preferred
+    // widget is squeezed into the viewport and never shows scroll bars.
+    // Minimum lets it grow (to center a small image) but not shrink
+    // below the scaled pixmap.
+    setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Minimum);
 }
 
 void YuvImageWidget::setImage(const QImage &image)
 {
     m_image = image;
-    updateGeometry();
+    applyContentSize();
     update();
 }
 
@@ -30,7 +36,7 @@ void YuvImageWidget::setScaleFactor(qreal scaleFactor)
     if (qFuzzyCompare(m_scaleFactor, scaleFactor))
         return;
     m_scaleFactor = scaleFactor;
-    updateGeometry();
+    applyContentSize();
     update();
 }
 
@@ -52,6 +58,25 @@ QSize YuvImageWidget::sizeHint() const
         return QFrame::sizeHint();
     const QSizeF logical = QSizeF(m_image.size()) / devicePixelRatioF();
     return (logical * m_scaleFactor).toSize() + QSize(2 * frameWidth(), 2 * frameWidth());
+}
+
+QSize YuvImageWidget::minimumSizeHint() const
+{
+    return sizeHint();
+}
+
+void YuvImageWidget::applyContentSize()
+{
+    if (m_image.isNull()) {
+        setMinimumSize(QSize());
+        updateGeometry();
+        return;
+    }
+    // resize() is what the scroll area notices (it filters the widget's
+    // Resize, not updateGeometry() on the viewport).
+    const QSize hint = sizeHint();
+    setMinimumSize(hint);
+    resize(hint);
 }
 
 void YuvImageWidget::paintEvent(QPaintEvent *event)

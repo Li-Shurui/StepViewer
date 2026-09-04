@@ -42,11 +42,13 @@ public:
     void setPixelGrid(bool grid);
 
     QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
 
 protected:
     void paintEvent(QPaintEvent *event) override;
 
 private:
+    void applyContentSize();
     void drawPixelGrid(QPainter &painter, const QRectF &clip, qreal step);
 
     QImage m_image;
