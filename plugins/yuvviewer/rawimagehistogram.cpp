@@ -7,6 +7,22 @@
 
 #include <vector>
 
+namespace {
+
+// The value of the sample at a 0-based rank in sorted order.
+int valueAtRank(const quint32 *counts, int levels, qint64 rank)
+{
+    qint64 seen = 0;
+    for (int value = 0; value < levels; ++value) {
+        seen += counts[value];
+        if (seen > rank)
+            return value;
+    }
+    return levels - 1;
+}
+
+} // namespace
+
 QList<RawImageHistogram::Channel> RawImageHistogram::compute(const RawImageDecoder &decoder,
                                                              const QByteArray &data,
                                                              const RawImageLayout &layout)
@@ -51,7 +67,20 @@ QList<RawImageHistogram::Channel> RawImageHistogram::compute(const RawImageDecod
             sum += quint64(value) * counts[value];
         }
         channel.minimum = qMax(channel.minimum, 0);
-        channel.mean = channel.total > 0 ? double(sum) / double(channel.total) : 0;
+        if (channel.total > 0) {
+            channel.mean = double(sum) / double(channel.total);
+
+            double squares = 0;
+            for (int value = channel.minimum; value <= channel.maximum; ++value) {
+                const double deviation = value - channel.mean;
+                squares += deviation * deviation * counts[value];
+            }
+            channel.variance = squares / double(channel.total);
+
+            const int lowerMiddle = valueAtRank(counts, channel.levels(), (channel.total - 1) / 2);
+            const int upperMiddle = valueAtRank(counts, channel.levels(), channel.total / 2);
+            channel.median = (lowerMiddle + upperMiddle) / 2.0;
+        }
         channels.append(channel);
     }
     return channels;

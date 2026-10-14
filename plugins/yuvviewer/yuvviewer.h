@@ -8,6 +8,7 @@
 
 #include "rawimagedecoder.h"
 #include "rawimagefilename.h"
+#include "rawimagehistogram.h"
 
 #include <QByteArray>
 #include <QImage>
@@ -89,7 +90,8 @@ private:
     void displayImage(const QImage &image);
     void showDecoded(const QImage &decoded);
     void applyDisplayAndShow();
-    void updateInfoTab(const RawImageLayout &layout, const RawImageDecoder *decoder);
+    void updateInfoTab(const RawImageLayout &layout, const RawImageDecoder *decoder,
+                       const QList<RawImageHistogram::Channel> &channels);
     void reportError(const QString &message);
 
     void setScaleFactor(qreal scaleFactor);

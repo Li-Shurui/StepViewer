@@ -22,6 +22,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFont>
 #include <QFrame>
 #include <QFuture>
 #include <QFutureWatcher>
@@ -37,6 +38,7 @@
 #include <QToolBar>
 #include <QtConcurrentRun>
 
+#include <cmath>
 #include <exception>
 #include <new>
 #include <utility>
@@ -492,9 +494,9 @@ void YuvViewer::reload()
             m_rawData = std::move(result->data);
             m_layout = loadLayout;
             showDecoded(result->image);
+            updateInfoTab(loadLayout, decoder, result->histogram);
             if (m_histogram)
                 m_histogram->setChannels(std::move(result->histogram));
-            updateInfoTab(loadLayout, decoder);
 
             const QString fileDescription = tr("\"%1\", %2x%3, %4 (stride=%5, scanline=%6)")
                                                 .arg(QDir::toNativeSeparators(fileName))
@@ -590,8 +592,10 @@ void YuvViewer::clear()
         m_imageWidget->setImage({});
         m_imageWidget->setText({});
     }
-    if (m_infoTable)
+    if (m_infoTable) {
+        m_infoTable->clearSpans();
         m_infoTable->setRowCount(0);
+    }
     if (m_histogram)
         m_histogram->clear();
 
@@ -690,7 +694,8 @@ void YuvViewer::displayImage(const QImage &image)
     applyScaleFactor(m_initialScaleFactor);
 }
 
-void YuvViewer::updateInfoTab(const RawImageLayout &layout, const RawImageDecoder *decoder)
+void YuvViewer::updateInfoTab(const RawImageLayout &layout, const RawImageDecoder *decoder,
+                              const QList<RawImageHistogram::Channel> &channels)
 {
     if (!m_infoTable || !decoder || !m_file)
         return;
@@ -703,8 +708,19 @@ void YuvViewer::updateInfoTab(const RawImageLayout &layout, const RawImageDecode
         m_infoTable->setItem(row, 1, new QTableWidgetItem(value));
         ++row;
     };
+    const auto addSection = [this, &row](const QString &title) {
+        m_infoTable->insertRow(row);
+        auto *item = new QTableWidgetItem(title);
+        QFont font = m_infoTable->font();
+        font.setBold(true);
+        item->setFont(font);
+        m_infoTable->setItem(row, 0, item);
+        m_infoTable->setSpan(row, 0, 1, 2);
+        ++row;
+    };
 
     const QString fileName = m_file->fileName();
+    m_infoTable->clearSpans();
     m_infoTable->setRowCount(0);
     addRow(tr("File"), QDir::toNativeSeparators(fileName));
     for (const auto &[key, value] : std::as_const(m_fileNameMetadata)) {
@@ -730,6 +746,20 @@ void YuvViewer::updateInfoTab(const RawImageLayout &layout, const RawImageDecode
     addRow(tr("Frame size"), locale.formattedDataSize(decoder->expectedByteSize(layout)));
     addRow(tr("File size"), locale.formattedDataSize(QFileInfo(fileName).size()));
     addRow(tr("Frames"), locale.toString(m_frameCount));
+
+    for (const RawImageHistogram::Channel &channel : channels) {
+        addSection(tr("%1 statistics (%2 bit)").arg(channel.name).arg(channel.bits));
+        addRow(tr("Sample count"), locale.toString(channel.total));
+        addRow(tr("Range"), tr("%1 to %2").arg(locale.toString(channel.minimum),
+                                               locale.toString(channel.maximum)));
+        addRow(tr("Mean"), locale.toString(channel.mean, 'f', 2));
+        // Either a sample value or halfway between two of them.
+        addRow(tr("Median"), locale.toString(channel.median, 'f',
+                                             channel.median == std::floor(channel.median) ? 0 : 1));
+        addRow(tr("Standard deviation"), locale.toString(channel.standardDeviation(), 'f', 2));
+        addRow(tr("Variance"), locale.toString(channel.variance, 'f', 2));
+    }
+    m_infoTable->resizeColumnToContents(0);
 }
 
 // A plane view shows the plane at its native (possibly subsampled)

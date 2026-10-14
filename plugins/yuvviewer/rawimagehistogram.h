@@ -10,10 +10,13 @@
 #include <QList>
 #include <QString>
 
+#include <cmath>
+
 namespace RawImageHistogram {
 
 // The distribution of one component plane over every value its samples
 // can take: 2^bits counts, so 256 for 8-bit data and 65536 for 16-bit.
+// The summary statistics are exact, taken over every sample of the plane.
 struct Channel
 {
     QString name;
@@ -21,10 +24,13 @@ struct Channel
     QList<quint32> counts;  // counts[v]: samples with value v
     qint64 total = 0;
     double mean = 0;
+    double median = 0;      // midway between the two middle samples for an even total
+    double variance = 0;    // population variance
     int minimum = 0;
     int maximum = 0;
 
     int levels() const { return int(counts.size()); }
+    double standardDeviation() const { return std::sqrt(variance); }
 };
 
 // Counts every component plane of the frame at its native bit depth,

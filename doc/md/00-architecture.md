@@ -28,7 +28,7 @@ YUV Viewer 是一个 Qt 插件，实现 `ViewerInterface`（`app/viewerinterface
 | `bayerdecoders.cpp` | Bayer 马赛克（裸传感器）格式，按 CFA 相位分族 |
 | `rawimagefilename.h/.cpp` | 从文件名解析布局与元数据 |
 | `rawimageframe.h/.cpp` | 帧一致性校验 + 渲染（合成图或单平面） |
-| `rawimagehistogram.h/.cpp` | 逐通道直方图统计，按分量原生位深计数 |
+| `rawimagehistogram.h/.cpp` | 逐通道直方图统计，按分量原生位深计数，并给出范围、均值、中位数、方差 |
 | `rawimagedisplay.h/.cpp` | 显示变换：自动电平、灰世界白平衡、Gamma（不改样本） |
 | `yuvimagewidget.h/.cpp` | 显示控件：缩放、平滑/最近邻、像素网格 |
 | `yuvhistogramwidget.h/.cpp` | 直方图控件：`QPainter` 绘制、按宽度分组、悬停提示 |
@@ -136,7 +136,8 @@ NV12 的 4096 带到 Bayer 上。`_stride[` / `_scanline[` 写了却不是合法
 5. `reload()` 同步做布局校验和帧数计算，然后把读盘 + 解码 + 直方图
    丢给工作线程；
 6. 完成回调缓存原始字节和**未变换**的解码图，按当前 View 预设做显示
-   变换后上屏，填充信息页和直方图页。直方图和像素探针始终读原始样本。
+   变换后上屏，填充信息页（含各分量的范围、均值、中位数、标准差、方差）
+   和直方图页。直方图、统计值和像素探针始终读原始样本。
 
 文件名解析不出尺寸也不是错误——此时显示提示语，等用户在工具栏填完
 宽高后按 Reload。只有当文件名**看着像**带了尺寸却解析不出来（例如
