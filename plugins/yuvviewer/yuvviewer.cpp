@@ -9,6 +9,7 @@
 #include "rawimageframe.h"
 #include "rawimagehistogram.h"
 #include "yuvcontrols.h"
+#include "yuvhistogramwidget.h"
 #include "yuvimagewidget.h"
 
 #include <opencv2/core.hpp>
@@ -26,11 +27,9 @@
 #include <QFutureWatcher>
 #include <QIcon>
 #include <QKeySequence>
-#include <QLabel>
 #include <QLocale>
 #include <QMainWindow>
 #include <QMouseEvent>
-#include <QPixmap>
 #include <QScrollArea>
 #include <QStatusBar>
 #include <QTableWidget>
@@ -46,12 +45,12 @@ using namespace Qt::StringLiterals;
 
 namespace {
 
-// One loaded frame: the raw samples plus the rendered views of them.
+// One loaded frame: the raw samples plus what was derived from them.
 struct LoadedFrame
 {
     QByteArray data;
     QImage image;
-    QImage histogram;
+    QList<RawImageHistogram::Channel> histogram;
 };
 using LoadResult = std::expected<LoadedFrame, QString>;
 
@@ -214,15 +213,14 @@ void YuvViewer::setupYuvUi()
 {
     m_infoTable = addInfoTab(tr("Info"));
 
-    auto *histogram = new QLabel;
-    histogram->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    m_histogramLabel = histogram;
+    auto *histogram = new YuvHistogramWidget;
+    m_histogram = histogram;
 
-    // A QLabel's minimum size follows its pixmap. Put it in a scroll area
-    // so the overview splitter can shrink past the histogram width.
+    // The charts stretch with the page but have a minimum width. The
+    // scroll area lets the overview splitter shrink past it.
     auto *histogramPage = new QScrollArea;
     histogramPage->setFrameShape(QFrame::NoFrame);
-    histogramPage->setWidgetResizable(false);
+    histogramPage->setWidgetResizable(true);
     histogramPage->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     histogramPage->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     histogramPage->setWidget(histogram);
@@ -465,7 +463,7 @@ void YuvViewer::reload()
                     promise.addResult(LoadResult(std::unexpected(image.error())));
                     return;
                 }
-                QImage histogram = RawImageHistogram::render(*decoder, *data, loadLayout);
+                auto histogram = RawImageHistogram::compute(*decoder, *data, loadLayout);
                 promise.addResult(LoadedFrame{std::move(*data), std::move(*image),
                                               std::move(histogram)});
             } catch (const std::bad_alloc &) {
@@ -494,10 +492,8 @@ void YuvViewer::reload()
             m_rawData = std::move(result->data);
             m_layout = loadLayout;
             showDecoded(result->image);
-            if (m_histogramLabel) {
-                m_histogramLabel->setPixmap(QPixmap::fromImage(result->histogram));
-                m_histogramLabel->adjustSize();
-            }
+            if (m_histogram)
+                m_histogram->setChannels(std::move(result->histogram));
             updateInfoTab(loadLayout, decoder);
 
             const QString fileDescription = tr("\"%1\", %2x%3, %4 (stride=%5, scanline=%6)")
@@ -596,10 +592,8 @@ void YuvViewer::clear()
     }
     if (m_infoTable)
         m_infoTable->setRowCount(0);
-    if (m_histogramLabel) {
-        m_histogramLabel->clear();
-        m_histogramLabel->adjustSize();
-    }
+    if (m_histogram)
+        m_histogram->clear();
 
     ++m_displayGeneration;
     releaseFrame();
@@ -920,8 +914,8 @@ void YuvViewer::retranslate()
             if (index >= 0)
                 tabs->setTabText(index, tr("Info"));
         }
-        if (m_histogramLabel) {
-            QWidget *page = m_histogramLabel;
+        if (m_histogram) {
+            QWidget *page = m_histogram;
             while (page && tabs->indexOf(page) < 0)
                 page = page->parentWidget();
             const int index = page ? tabs->indexOf(page) : -1;

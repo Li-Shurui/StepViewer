@@ -13,7 +13,7 @@
 // Primitives shared by the concrete decoders in yuvdecoders.cpp,
 // rgbdecoders.cpp and bayerdecoders.cpp. A new format is normally a
 // matter of picking the matching layout validator, one of the plane
-// extractors and one of the pixel describers, so this is the first place
+// layouts and one of the pixel describers, so this is the first place
 // to look before writing anything by hand.
 //
 // Not part of the public decoder API; only the decoder implementations
@@ -204,59 +204,31 @@ RawImageDecoder::ImageResult runConversion(const RawImageDecoder &decoder, Conve
     }
 }
 
-// Wraps an 8-bit plane as a detached Format_Grayscale8 image.
-inline RawImageDecoder::ImageResult grayscalePlane(const uchar *base, int width, int height,
-                                                   qsizetype stride)
+// Plane layouts for the three ways a sample is stored. Offsets and
+// strides are in bytes.
+
+// One byte per sample.
+inline RawPlaneLayout bytePlane(qint64 offset, int width, int height, qint64 rowStride,
+                                int sampleStride = 1)
 {
-    const QImage wrapped(base, width, height, stride, QImage::Format_Grayscale8);
-    QImage image = wrapped.copy();
-    if (image.isNull())
-        return std::unexpected(RawImageDecoder::tr("Could not allocate the plane image."));
-    return image;
+    return {.offset = offset, .width = width, .height = height, .rowStride = rowStride,
+            .sampleStride = sampleStride, .containerBytes = 1, .shift = 0, .bits = 8};
 }
 
-// Copies every step-th byte starting at offset into a tight grayscale
-// image; used to deinterleave packed or semi-planar components.
-inline RawImageDecoder::ImageResult stridedPlane(const uchar *base, int width, int height,
-                                                 qint64 rowStride, int step, int offset)
+// One 16-bit container per sample, packed the way format says.
+inline RawPlaneLayout wordPlane(qint64 offset, int width, int height, qint64 rowStride,
+                                int sampleStride, const RawSampleFormat &format)
 {
-    QImage image(width, height, QImage::Format_Grayscale8);
-    if (image.isNull())
-        return std::unexpected(RawImageDecoder::tr("Could not allocate the plane image."));
-    for (int row = 0; row < height; ++row) {
-        const uchar *src = base + qint64(row) * rowStride + offset;
-        uchar *dst = image.scanLine(row);
-        for (int col = 0; col < width; ++col)
-            dst[col] = src[col * step];
-    }
-    return image;
+    return {.offset = offset, .width = width, .height = height, .rowStride = rowStride,
+            .sampleStride = sampleStride, .containerBytes = 2,
+            .shift = format.msbAligned ? format.padding() : 0, .bits = format.bits};
 }
 
-// Extracts one channel of a bit-packed 16-bit RGB format (RGB565 and
-// friends) and scales it to 8 bits.
-inline RawImageDecoder::ImageResult rgb16Plane(const uchar *base, int width, int height,
-                                               qint64 rowStride, quint16 mask, int shift, int bits)
+// One bit field of a 16-bit pixel, as in RGB565.
+inline RawPlaneLayout bitFieldPlane(int width, int height, qint64 rowStride, int shift, int bits)
 {
-    QImage image(width, height, QImage::Format_Grayscale8);
-    if (image.isNull())
-        return std::unexpected(RawImageDecoder::tr("Could not allocate the plane image."));
-    const int maxValue = (1 << bits) - 1;
-    for (int row = 0; row < height; ++row) {
-        const uchar *src = base + qint64(row) * rowStride;
-        uchar *dst = image.scanLine(row);
-        for (int col = 0; col < width; ++col) {
-            quint16 pixel;
-            memcpy(&pixel, src + 2 * col, sizeof(pixel));
-            const int value = (pixel & mask) >> shift;
-            dst[col] = uchar((value * 255 + maxValue / 2) / maxValue);
-        }
-    }
-    return image;
-}
-
-inline RawImageDecoder::ImageResult invalidPlane(int plane)
-{
-    return std::unexpected(RawImageDecoder::tr("Invalid plane index %1.").arg(plane));
+    return {.offset = 0, .width = width, .height = height, .rowStride = rowStride,
+            .sampleStride = 2, .containerBytes = 2, .shift = shift, .bits = bits};
 }
 
 // Reads one little-endian 16-bit sample.
@@ -292,43 +264,6 @@ inline quint16 fullRangeSample(quint16 container, const RawSampleFormat &format)
 inline bool sampleNeedsNormalizing(const RawSampleFormat &format)
 {
     return !format.msbAligned && format.padding() != 0;
-}
-
-// Wraps a 16-bit plane as 8-bit grayscale, taking the most significant
-// byte of each normalized sample.
-inline RawImageDecoder::ImageResult grayscale16Plane(const uchar *base, int width, int height,
-                                                     qsizetype strideBytes,
-                                                     const RawSampleFormat &format)
-{
-    QImage image(width, height, QImage::Format_Grayscale8);
-    if (image.isNull())
-        return std::unexpected(RawImageDecoder::tr("Could not allocate the plane image."));
-    for (int row = 0; row < height; ++row) {
-        const uchar *src = base + qint64(row) * strideBytes;
-        uchar *dst = image.scanLine(row);
-        for (int col = 0; col < width; ++col)
-            dst[col] = uchar(fullRangeSample(readLe16(src + 2 * col), format) >> 8);
-    }
-    return image;
-}
-
-// 16-bit variant of stridedPlane(); step and offset are in samples.
-inline RawImageDecoder::ImageResult strided16Plane(const uchar *base, int width, int height,
-                                                   qint64 rowStrideBytes, int step, int offset,
-                                                   const RawSampleFormat &format)
-{
-    QImage image(width, height, QImage::Format_Grayscale8);
-    if (image.isNull())
-        return std::unexpected(RawImageDecoder::tr("Could not allocate the plane image."));
-    for (int row = 0; row < height; ++row) {
-        const uchar *src = base + qint64(row) * rowStrideBytes;
-        uchar *dst = image.scanLine(row);
-        for (int col = 0; col < width; ++col) {
-            dst[col] = uchar(fullRangeSample(readLe16(src + 2 * (col * step + offset)),
-                                             format) >> 8);
-        }
-    }
-    return image;
 }
 
 inline QString describeYuv(int y, int u, int v)

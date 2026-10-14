@@ -23,19 +23,24 @@ YUV Viewer 可以把图像的单个分量平面（Y / U / V 或 R / G / B / A / 
 
 ```cpp
 virtual QStringList planeNames() const { return {}; }
-virtual ImageResult extractPlane(const QByteArray &data,
-                                 const RawImageLayout &layout, int plane) const;
+virtual std::optional<RawPlaneLayout> planeLayout(const RawImageLayout &layout,
+                                                  int plane) const;
 ```
+
+`planeLayout()` 不读数据，只描述平面 i 的样本在帧里怎么排：起始偏移、
+平面宽高、行距、同行样本间距、容器字节数和有效位（`shift`/`bits`）。
+基类的非虚函数 `extractPlane()` 按这份描述逐行读出样本，转成
+`Format_Grayscale8`；直方图（功能 7）读的也是同一份描述。
 
 各格式家族统一实现，单格式解码器只需提供顺序/偏移参数：
 
-| 家族 | 提取方式 |
+| 家族 | 平面描述 |
 | --- | --- |
-| Planar (I420/I422/I444 等) | 直接按平面偏移包装为 `Format_Grayscale8` |
-| Semi-planar (NV12/NV16 等) | Y 直接包装；U/V 按 2 字节步长去交织 |
-| Packed 4:2:2 (YUY2 等) | 按宏像素内字节偏移步进提取（Y 步长 2，U/V 步长 4） |
-| Packed RGB 8-bit | 按通道字节偏移步进提取 |
-| RGB565/555 系列 | 按 mask/shift/bits 解位域并线性扩展到 8 位 |
+| Planar (I420/I422/I444 等) | 按平面偏移，样本间距 1 字节 |
+| Semi-planar (NV12/NV16 等) | Y 间距 1；U/V 在交织平面里间距 2（P010/P016 为 Y 2、U/V 4） |
+| Packed 4:2:2 (YUY2 等) | 按宏像素内字节偏移，Y 间距 2，U/V 间距 4 |
+| Packed RGB 8-bit | 按通道字节偏移，间距为每像素字节数 |
+| RGB565/555 系列 | 2 字节容器，按通道的 shift/bits 取位域 |
 
 为此给各家族补充了描述布局的虚函数：`chromaOrderIsUV()`（NV12/NV21、
 I420/YV12 此前只有 conversionCode）、`componentOffsets()`（packed 422
@@ -53,5 +58,6 @@ I420/YV12 此前只有 conversionCode）、`componentOffsets()`（packed 422
 ## 备注
 
 - 平面提取全部在工作线程执行，大文件切换不会阻塞 UI；
-- 16-bit 位打包格式（RGB565 等）的通道按 `(v * 255 + max/2) / max`
-  做带舍入的线性扩展，避免简单移位造成的亮度偏差。
+- 转成 8 位灰度时，超过 8 位的样本取高 8 位；不足 8 位的（RGB565 等的
+  5/6 位通道）按 `(v * 255 + max/2) / max` 做带舍入的线性扩展，避免简单
+  移位造成的亮度偏差。

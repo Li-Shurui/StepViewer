@@ -48,6 +48,33 @@ struct RawImageLayout
     RawSampleFormat sample;
 };
 
+// Where the samples of one component plane sit in a frame buffer, which
+// is all generic code needs to walk them without knowing the format.
+// Every sample is an unsigned number of `bits` bits, stored in a 1- or
+// 2-byte little-endian container and read as
+// (container >> shift) & (2^bits - 1).
+struct RawPlaneLayout
+{
+    qint64 offset = 0;       // bytes from the start of the frame to the first sample
+    int width = 0;           // samples per row
+    int height = 0;          // rows
+    qint64 rowStride = 0;    // bytes from one row to the next
+    int sampleStride = 1;    // bytes from one sample to the next within a row
+    int containerBytes = 1;  // 1, or 2 for a 16-bit word
+    int shift = 0;           // position of the sample's lowest bit in the container
+    int bits = 8;            // values run 0 .. 2^bits - 1
+
+    int levels() const { return 1 << bits; }
+
+    // True when the description is coherent and every sample lies within
+    // a buffer of the given size.
+    bool fitsIn(qint64 bufferSize) const;
+
+    // Reads one row as the format's own numbers into values, which must
+    // hold width entries. Only valid once fitsIn() holds for frame.
+    void readRow(const uchar *frame, int row, quint16 *values) const;
+};
+
 // Abstract decoder for one raw pixel format (NV12, NV21, I420, RGB888, ...).
 // Implementations are stateless singletons owned by the RawImageDecoders
 // registry; add a new format by subclassing and registering it there.
@@ -95,14 +122,21 @@ public:
     virtual ImageResult convertToImage(const QByteArray &data,
                                        const RawImageLayout &layout) const = 0;
 
-    // Component plane access for separate plane viewing. planeNames()
-    // lists the logical planes (e.g. {"Y","U","V"} or {"R","G","B","A"});
-    // an empty list means plane viewing is not supported. extractPlane()
-    // returns plane i as a Format_Grayscale8 image at its native
-    // (possibly subsampled) resolution.
+    // Component planes. planeNames() lists the logical planes (e.g.
+    // {"Y","U","V"} or {"R","G","B","A"}); an empty list means the format
+    // offers none. planeLayout() locates plane i in a frame of layout at
+    // the plane's native (possibly subsampled) resolution and bit depth,
+    // and returns nullopt for an index outside planeNames(). Plane viewing
+    // and the histogram both read the samples through it.
     virtual QStringList planeNames() const { return {}; }
-    virtual ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
-                                     int plane) const;
+    virtual std::optional<RawPlaneLayout> planeLayout(const RawImageLayout &layout,
+                                                      int plane) const;
+
+    // Plane i as a Format_Grayscale8 image for display: samples deeper
+    // than 8 bits keep their top eight, narrower ones are stretched to
+    // the full range.
+    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
+                             int plane) const;
 
     // Pixel probe: describes the raw sample values of the pixel at (x,y)
     // in composite coordinates, e.g. "Y=128 U=90 V=200". The base

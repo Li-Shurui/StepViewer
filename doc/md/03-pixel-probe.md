@@ -32,7 +32,7 @@ virtual QString describePixel(const QByteArray &data,
 | Semi-planar (NV12/NV16…) | Y 直读；U/V 在交织平面按 `(x/2)*2+order` |
 | Packed 4:2:2 (YUY2…) | 定位宏像素 `(x/2)*4`，按 `componentOffsets()` 取字节 |
 | Packed RGB 8-bit | 按 `channelByteOffset()` 取通道字节 |
-| RGB565/555 | 读 `quint16`，按 `channelBitLayout()` 解位域，带舍入扩展到 8 位 |
+| RGB565/555 | 读 `quint16`，按 `channelBitLayout()` 解位域，报告位域原值 |
 
 功能 2 引入的 `chromaOrderIsUV()` / `componentOffsets()` /
 `channelByteOffset()` / `channelBitLayout()` 在这里全部复用，
@@ -50,6 +50,7 @@ virtual QString describePixel(const QByteArray &data,
 
 ## 备注
 
-- 16-bit 位打包格式显示的是扩展到 8 位后的值（与画面所见一致）；
+- 16-bit 位打包格式显示的是位域原值（RGB565 的 R/B 为 0..31，G 为 0..63），
+  与直方图的横轴一致；
 - 高 bit 深度格式（P010 等，见 `08-high-bit-depth.md`）会显示
   原始 16 位容器中的采样值。

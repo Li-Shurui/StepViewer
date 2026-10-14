@@ -7,19 +7,33 @@
 #include "rawimagedecoder.h"
 
 #include <QByteArray>
-#include <QImage>
+#include <QList>
+#include <QString>
 
 namespace RawImageHistogram {
 
-// Reduces every component plane of the frame to a 256-bin distribution
-// and renders the distributions as a stack of labelled charts, one per
-// plane. Returns a null image when the format exposes no planes or when
-// data does not hold one frame of layout.
+// The distribution of one component plane over every value its samples
+// can take: 2^bits counts, so 256 for 8-bit data and 65536 for 16-bit.
+struct Channel
+{
+    QString name;
+    int bits = 8;
+    QList<quint32> counts;  // counts[v]: samples with value v
+    qint64 total = 0;
+    double mean = 0;
+    int minimum = 0;
+    int maximum = 0;
+
+    int levels() const { return int(counts.size()); }
+};
+
+// Counts every component plane of the frame at its native bit depth,
+// straight from the sample buffer. Returns an empty list when the format
+// exposes no planes or when data does not hold one frame of layout.
 //
-// Safe to call from a worker thread: painting onto a QImage does not
-// require the GUI thread.
-QImage render(const RawImageDecoder &decoder, const QByteArray &data,
-              const RawImageLayout &layout);
+// Pure computation, safe to call from a worker thread.
+QList<Channel> compute(const RawImageDecoder &decoder, const QByteArray &data,
+                       const RawImageLayout &layout);
 
 } // namespace RawImageHistogram
 

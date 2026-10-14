@@ -6,11 +6,42 @@
 #include "rawimagedecoder_p.h"
 
 #include <QFile>
+#include <QtEndian>
 
 #include <limits>
 #include <new>
+#include <vector>
 
 using namespace Qt::StringLiterals;
+
+bool RawPlaneLayout::fitsIn(qint64 bufferSize) const
+{
+    if (width <= 0 || height <= 0 || offset < 0 || rowStride < 0 || sampleStride < 0)
+        return false;
+    if ((containerBytes != 1 && containerBytes != 2) || bits < 1 || shift < 0
+        || shift + bits > containerBytes * 8) {
+        return false;
+    }
+
+    const qint64 end = offset + qint64(height - 1) * rowStride
+                       + qint64(width - 1) * sampleStride + containerBytes;
+    return end <= bufferSize;
+}
+
+void RawPlaneLayout::readRow(const uchar *frame, int row, quint16 *values) const
+{
+    const uchar *source = frame + offset + qint64(row) * rowStride;
+    const quint32 mask = (1u << bits) - 1u;
+    if (containerBytes == 1) {
+        for (int col = 0; col < width; ++col)
+            values[col] = quint16((source[qint64(col) * sampleStride] >> shift) & mask);
+        return;
+    }
+    for (int col = 0; col < width; ++col) {
+        const quint16 container = qFromLittleEndian<quint16>(source + qint64(col) * sampleStride);
+        values[col] = quint16((container >> shift) & mask);
+    }
+}
 
 RawImageDecoder::LayoutResult RawImageDecoder::validateLayout(const RawImageLayout &layout) const
 {
@@ -44,11 +75,46 @@ int RawImageDecoder::defaultStride(int width) const
     return width;
 }
 
-RawImageDecoder::ImageResult RawImageDecoder::extractPlane(const QByteArray &,
-                                                           const RawImageLayout &, int) const
+std::optional<RawPlaneLayout> RawImageDecoder::planeLayout(const RawImageLayout &, int) const
 {
-    return std::unexpected(tr("%1 does not support separate plane viewing.")
-                               .arg(displayName()));
+    return std::nullopt;
+}
+
+RawImageDecoder::ImageResult RawImageDecoder::extractPlane(const QByteArray &data,
+                                                           const RawImageLayout &layout,
+                                                           int plane) const
+{
+    const QStringList names = planeNames();
+    if (names.isEmpty()) {
+        return std::unexpected(tr("%1 does not support separate plane viewing.")
+                                   .arg(displayName()));
+    }
+    const std::optional<RawPlaneLayout> geometry = planeLayout(layout, plane);
+    if (!geometry || plane < 0 || plane >= names.size())
+        return std::unexpected(tr("Invalid plane index %1.").arg(plane));
+    if (!geometry->fitsIn(data.size())) {
+        return std::unexpected(tr("The %1 plane extends past the end of the %2 frame.")
+                                   .arg(names.at(plane), displayName()));
+    }
+
+    QImage image(geometry->width, geometry->height, QImage::Format_Grayscale8);
+    if (image.isNull())
+        return std::unexpected(tr("Could not allocate the plane image."));
+
+    const int maximum = geometry->levels() - 1;
+    const int downShift = qMax(0, geometry->bits - 8);
+    const auto *frame = reinterpret_cast<const uchar *>(data.constData());
+    std::vector<quint16> values(size_t(geometry->width));
+    for (int row = 0; row < geometry->height; ++row) {
+        geometry->readRow(frame, row, values.data());
+        uchar *destination = image.scanLine(row);
+        for (int col = 0; col < geometry->width; ++col) {
+            const int value = values[size_t(col)];
+            destination[col] = uchar(geometry->bits >= 8 ? value >> downShift
+                                                         : (value * 255 + maximum / 2) / maximum);
+        }
+    }
+    return image;
 }
 
 QString RawImageDecoder::describePixel(const QByteArray &, const RawImageLayout &,

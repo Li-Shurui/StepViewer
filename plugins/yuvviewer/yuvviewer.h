@@ -18,10 +18,10 @@
 #include <optional>
 
 class QAction;
-class QLabel;
 class QPoint;
 class QTableWidget;
 class YuvControls;
+class YuvHistogramWidget;
 class YuvImageWidget;
 
 // Viewer for headerless image files. Because such a file says nothing
@@ -104,7 +104,7 @@ private:
     QPointer<YuvImageWidget> m_imageWidget;
     QPointer<YuvControls> m_controls;
     QPointer<QTableWidget> m_infoTable;
-    QPointer<QLabel> m_histogramLabel;
+    QPointer<YuvHistogramWidget> m_histogram;
 
     // Owned by this object and therefore valid across cleanup().
     QAction *m_reloadAction = nullptr;

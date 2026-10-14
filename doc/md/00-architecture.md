@@ -22,15 +22,16 @@ YUV Viewer 是一个 Qt 插件，实现 `ViewerInterface`（`app/viewerinterface
 | 文件 | 职责 |
 | --- | --- |
 | `rawimagedecoder.h/.cpp` | 解码器抽象基类 + 读盘（`readData()`）+ 格式注册表 |
-| `rawimagedecoder_p.h` | 各解码器共用的原语：布局校验、平面提取、像素描述 |
+| `rawimagedecoder_p.h` | 各解码器共用的原语：布局校验、平面描述、像素描述 |
 | `yuvdecoders.cpp` | YUV 各族解码器（4:2:0 / 4:2:2 / 4:4:4，8 与 16 bit） |
 | `rgbdecoders.cpp` | 单平面格式：packed RGB、位打包 RGB565 系列、灰度 Y8 |
 | `bayerdecoders.cpp` | Bayer 马赛克（裸传感器）格式，按 CFA 相位分族 |
 | `rawimagefilename.h/.cpp` | 从文件名解析布局与元数据 |
 | `rawimageframe.h/.cpp` | 帧一致性校验 + 渲染（合成图或单平面） |
-| `rawimagehistogram.h/.cpp` | 逐通道直方图统计与绘图 |
+| `rawimagehistogram.h/.cpp` | 逐通道直方图统计，按分量原生位深计数 |
 | `rawimagedisplay.h/.cpp` | 显示变换：自动电平、灰世界白平衡、Gamma（不改样本） |
 | `yuvimagewidget.h/.cpp` | 显示控件：缩放、平滑/最近邻、像素网格 |
+| `yuvhistogramwidget.h/.cpp` | 直方图控件：`QPainter` 绘制、按宽度分组、悬停提示 |
 | `yuvcontrols.h/.cpp` | 工具栏控件：宽高/stride/格式/样本/Reload 挂在主窗口 Open 工具栏，显示预设、平面、帧号在下一行 |
 | `yuvviewer.h/.cpp` | 编排：生命周期、状态、加载流程、缩放、导出 |
 
@@ -39,7 +40,8 @@ YUV Viewer 是一个 Qt 插件，实现 `ViewerInterface`（`app/viewerinterface
 ```
 yuvviewer  ───────────────┐  编排层，依赖以下全部
   yuvcontrols             │  UI 层
-  yuvimagewidget         ─┤  （只依赖 Qt）
+  yuvimagewidget          │  （只依赖 Qt）
+  yuvhistogramwidget     ─┤  （只画统计结果，不读帧数据）
     rawimagedisplay       │  纯逻辑层，无 UI、可在工作线程调用
     rawimagehistogram     │
     rawimagefilename      │
@@ -89,8 +91,8 @@ struct RawSampleFormat { int bits; bool msbAligned; };
 8 位显示路径要的是它）。左对齐时后者是恒等变换，所以常见情况不产生拷贝。
 
 贯穿全插件的关键三元组是 **(decoder, data, layout)**。所有按坐标索引缓冲区
-的操作（`convertToImage`、`extractPlane`、`describePixel`）都假设三者自洽，
-一旦不自洽就是越界读。见下面的"安全约束"。
+的操作（`convertToImage`、`describePixel`，以及按 `planeLayout()` 读样本的
+平面视图和直方图）都假设三者自洽，一旦不自洽就是越界读。见下面的"安全约束"。
 
 ### 显示变换
 
@@ -159,9 +161,16 @@ std::optional<RawSampleFormat> defaultSampleFormat() const;  // 空表示 8 位�
 // 像素
 ImageResult convertToImage(const QByteArray &, const RawImageLayout &) const;
 QStringList planeNames() const;                    // 空表示不支持分平面
-ImageResult extractPlane(...) const;
+std::optional<RawPlaneLayout> planeLayout(const RawImageLayout &, int plane) const;
 QString describePixel(...) const;                  // 像素探针
 ```
+
+`planeLayout()` 只**描述**平面 i 在帧里的位置：起始偏移、分辨率、行距、
+样本间距、1 或 2 字节的小端容器，以及有效位所在的 `shift`/`bits`。
+读样本的代码只有一份，在基类里：非虚的 `extractPlane()` 据此生成 8 位
+灰度的平面视图，`RawImageHistogram::compute()` 据此按原生位深统计直方图。
+所以一个格式支持分平面只需描述布局，不用自己写提取循环，平面视图和直方图
+看到的样本也必然一致。
 
 错误统一用 `std::expected<T, QString>` 返回，消息直接面向用户——裸图的
 失败几乎都是"你选的格式和这个文件对不上"，需要说清哪里对不上。
@@ -208,8 +217,9 @@ GRBG 用 `BayerGB`，GBRG 用 `BayerGR`，BGGR 用 `BayerRG`。
   放大 stride 下限）、`validateBayerLayout()`（2×2 CFA 要求宽高为偶数）；
 - 转换封装：`rgbaMatToImage()`（cv::Mat → 脱离的 QImage）、
   `runConversion()`（把 OpenCV 异常翻成错误结果）；
-- 平面提取：`grayscalePlane()` / `stridedPlane()` / `rgb16Plane()` /
-  `grayscale16Plane()` / `strided16Plane()`；
+- 平面描述：`bytePlane()`（8 位样本）/ `wordPlane()`（16 位容器，按样本
+  打包设置取 `shift`/`bits`）/ `bitFieldPlane()`（RGB565 系列的位域），
+  都返回 `RawPlaneLayout`；
 - 样本归一化：`rawSampleValue()` / `fullRangeSample()` /
   `sampleNeedsNormalizing()`；
 - 像素描述：`describeYuv()` / `describeYuva()` / `describeRgb()` /
@@ -220,7 +230,8 @@ GRBG 用 `BayerGB`，GBRG 用 `BayerGR`，BGGR 用 `BayerRG`。
 1. 在 `yuvdecoders.cpp` / `rgbdecoders.cpp` / `bayerdecoders.cpp` 里挑一个
    族基类继承，只需重写 `id()` / `displayName()` / `mimeType()` /
    `fileExtensions()` 和描述分量顺序的那一两个钩子；族里没有合适的就直接
-   继承 `RawImageDecoder`，用 `rawimagedecoder_p.h` 的原语拼出实现；
+   继承 `RawImageDecoder`，用 `rawimagedecoder_p.h` 的原语拼出实现。要支持
+   分平面查看和直方图，只需实现 `planeNames()` 和 `planeLayout()`；
 2. 在同文件末尾的 `createYuvDecoders()` / `createRgbDecoders()` /
    `createBayerDecoders()` 里加一行。
 
@@ -233,8 +244,9 @@ GRBG 用 `BayerGB`，GBRG 用 `BayerGR`，BGGR 用 `BayerRG`。
 
 - `AbstractViewer::startAsyncTaskWithProgress()` 起 `QtConcurrent` 任务，
   带进度回调和完成回调，完成回调回到 UI 线程；
-- `QPainter` 画到 `QImage` 是线程安全的，所以直方图连绘图一起在工作线程
-  完成，UI 线程只做一次 `QPixmap::fromImage()`（`QPixmap` 必须在 GUI 线程）；
+- 直方图在工作线程只做统计（每个分量 `2^bits` 个计数），绘制交给 UI 线程的
+  `YuvHistogramWidget`。这样它能按当前宽度、DPI 和主题随时重画，而不必重新
+  统计；
 - 取消是协作式的：`readData()` 每读完一块就问一次进度回调要不要继续，
   新的加载会先 `cancelAsyncTasks()` 作废旧的；
 - 切换平面**不重新读盘**，直接对缓存的 `m_rawData` 做提取（`QByteArray`
@@ -283,8 +295,10 @@ viewer 名、宽、高、格式 id、帧号、平面索引、样本位深与对�
    `m_loadedDecoder`，两者不一致时提示重新加载而不是硬解。
 2. **索引缓冲区前必须过 `RawImageFrame::validate()`。**
    它检查 (decoder, data, layout) 三元组自洽，`render()` 内部会先调它，
-   像素探针和直方图渲染也各自调一次——即使当前调用点恰好安全，也不依赖
-   调用顺序来保证安全。
+   像素探针和直方图统计也各自调一次——即使当前调用点恰好安全，也不依赖
+   调用顺序来保证安全。读平面前还要过 `RawPlaneLayout::fitsIn()`，确认
+   平面的最后一个样本仍在缓冲区内。`planeLayout()` 万一算错，平面视图报错、
+   直方图跳过该平面，而不是越界读。
 
 此外加载任务包了 `std::bad_alloc` / `std::exception` / `...` 三层
 catch，把内存不足和 OpenCV 内部异常翻成用户可见的错误，而不是让插件

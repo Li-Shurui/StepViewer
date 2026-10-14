@@ -64,6 +64,7 @@ qt_add_plugin(yuvviewer
     CLASS_NAME YuvViewer
     yuvviewer.cpp yuvviewer.h
     yuvcontrols.cpp yuvcontrols.h
+    yuvhistogramwidget.cpp yuvhistogramwidget.h
     yuvimagewidget.cpp yuvimagewidget.h
     rawimagedecoder.cpp rawimagedecoder.h rawimagedecoder_p.h
     yuvdecoders.cpp

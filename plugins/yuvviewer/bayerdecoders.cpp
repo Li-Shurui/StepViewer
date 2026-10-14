@@ -110,21 +110,20 @@ public:
     // frame sampled every second column of every second row: a quarter of
     // the pixels, at half the width and half the height. This is the raw
     // mosaic, with no interpolated samples in it.
-    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
-                             int plane) const override
+    std::optional<RawPlaneLayout> planeLayout(const RawImageLayout &layout,
+                                              int plane) const override
     {
         const std::array<int, 4> pattern = cfaPattern();
         const auto position = std::find(pattern.cbegin(), pattern.cend(), plane);
         if (position == pattern.cend())
-            return invalidPlane(plane);
+            return std::nullopt;
 
         const auto index = position - pattern.cbegin();
         const int columnOffset = int(index % 2);
         const int rowOffset = int(index / 2);
-        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
-        return strided16Plane(pixels + qint64(rowOffset) * layout.stride,
-                              layout.width / 2, layout.height / 2,
-                              qint64(layout.stride) * 2, 2, columnOffset, layout.sample);
+        return wordPlane(qint64(rowOffset) * layout.stride + columnOffset * 2,
+                         layout.width / 2, layout.height / 2,
+                         qint64(layout.stride) * 2, 4, layout.sample);
     }
 
     // A mosaic pixel carries one color and nothing else, so the probe

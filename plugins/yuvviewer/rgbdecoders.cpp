@@ -93,27 +93,24 @@ public:
         return names;
     }
 
-    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
-                             int plane) const override
+    std::optional<RawPlaneLayout> planeLayout(const RawImageLayout &layout,
+                                              int plane) const override
     {
         if (plane < 0 || plane >= planeNames().size())
-            return invalidPlane(plane);
+            return std::nullopt;
 
-        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
         const int byteOffset = channelByteOffset(plane);
         if (byteOffset >= 0) {
-            return stridedPlane(pixels, layout.width, layout.height, layout.stride,
-                                bytesPerPixel(), byteOffset);
+            return bytePlane(byteOffset, layout.width, layout.height, layout.stride,
+                             bytesPerPixel());
         }
 
         quint16 mask = 0;
         int shift = 0;
         int bits = 0;
-        if (channelBitLayout(plane, mask, shift, bits)) {
-            return rgb16Plane(pixels, layout.width, layout.height, layout.stride,
-                              mask, shift, bits);
-        }
-        return invalidPlane(plane);
+        if (channelBitLayout(plane, mask, shift, bits))
+            return bitFieldPlane(layout.width, layout.height, layout.stride, shift, bits);
+        return std::nullopt;
     }
 
     QString describePixel(const QByteArray &data, const RawImageLayout &layout,
@@ -138,11 +135,8 @@ public:
             quint16 mask = 0;
             int shift = 0;
             int bits = 0;
-            if (channelBitLayout(channel, mask, shift, bits)) {
-                const int value = (pixel & mask) >> shift;
-                const int maxValue = (1 << bits) - 1;
-                channels[channel] = (value * 255 + maxValue / 2) / maxValue;
-            }
+            if (channelBitLayout(channel, mask, shift, bits))
+                channels[channel] = (pixel & mask) >> shift;
         }
         return describeRgb(channels[0], channels[1], channels[2]);
     }
@@ -472,14 +466,13 @@ public:
         return names;
     }
 
-    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
-                             int plane) const override
+    std::optional<RawPlaneLayout> planeLayout(const RawImageLayout &layout,
+                                              int plane) const override
     {
         if (plane < 0 || plane >= planeNames().size())
-            return invalidPlane(plane);
-        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
-        return strided16Plane(pixels, layout.width, layout.height, layout.stride,
-                              bytesPerPixel() / 2, plane, layout.sample);
+            return std::nullopt;
+        return wordPlane(2 * plane, layout.width, layout.height, layout.stride,
+                         bytesPerPixel(), layout.sample);
     }
 
     QString describePixel(const QByteArray &data, const RawImageLayout &layout,
@@ -645,13 +638,12 @@ public:
 
     QStringList planeNames() const override { return {QStringLiteral("Y")}; }
 
-    ImageResult extractPlane(const QByteArray &data, const RawImageLayout &layout,
-                             int plane) const override
+    std::optional<RawPlaneLayout> planeLayout(const RawImageLayout &layout,
+                                              int plane) const override
     {
         if (plane != 0)
-            return invalidPlane(plane);
-        const auto *pixels = reinterpret_cast<const uchar *>(data.constData());
-        return grayscalePlane(pixels, layout.width, layout.height, layout.stride);
+            return std::nullopt;
+        return bytePlane(0, layout.width, layout.height, layout.stride);
     }
 
     QString describePixel(const QByteArray &data, const RawImageLayout &layout,
